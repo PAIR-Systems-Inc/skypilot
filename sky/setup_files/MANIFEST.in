@@ -18,5 +18,4 @@ include sky/server/html/*
 recursive-include sky/dashboard/out *
 include sky/users/*.conf
 include alembic.ini
-recursive-include sky/alembic_state_db *
-recursive-include sky/alembic_spot_jobs_db *
+recursive-include sky/schemas/db *
