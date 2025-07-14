@@ -9,7 +9,7 @@ from sky.provision.cudo import cudo_machine_type
 from sky.provision.cudo import cudo_wrapper
 from sky.utils import status_lib
 
-POLL_INTERVAL = 10
+POLL_INTERVAL = 60
 
 logger = sky_logging.init_logger(__name__)
 
