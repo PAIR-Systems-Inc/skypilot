@@ -9,7 +9,7 @@ from sky.provision.cudo import cudo_machine_type
 from sky.provision.cudo import cudo_wrapper
 from sky.utils import status_lib
 
-POLL_INTERVAL = 60
+POLL_INTERVAL = 100
 
 logger = sky_logging.init_logger(__name__)
 
@@ -111,18 +111,19 @@ def run_instances(region: str, cluster_name_on_cloud: str,
             head_instance_id = instance_id
 
     # Wait for instances to be ready.
-    retries = 60  # times 10 second
+    retries = 6  # times 100 second
     results = {}
     for instance_id in created_instance_ids:
         for _ in range(retries):
             logger.info('Waiting for instance(s) to be ready '
-                        f'{instance_id}')
+                        f'{instance_id}'
+                        f' every {POLL_INTERVAL} seconds.')
+            time.sleep(POLL_INTERVAL)
             vm = cudo_wrapper.get_instance(instance_id)
             if vm['vm']['short_state'] == 'runn':
-                results[id] = vm['vm']
+                results[instance_id] = vm['vm']
                 break
-            else:
-                time.sleep(POLL_INTERVAL)
+                
 
     assert head_instance_id is not None, 'head_instance_id should not be None'
     return common.ProvisionRecord(provider_name='cudo',

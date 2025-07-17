@@ -1,4 +1,7 @@
 """Cudo Compute library wrapper for SkyPilot."""
+import json
+import os
+import requests
 import time
 from typing import Dict
 
@@ -9,10 +12,10 @@ import sky.provision.cudo.cudo_utils as utils
 logger = sky_logging.init_logger(__name__)
 
 
-def launch(name: str, data_center_id: str, ssh_key: str, machine_type: str,
-           memory_gib: int, vcpu_count: int, gpu_count: int,
-           tags: Dict[str, str], disk_size: int):
-    """Launches an instance with the given parameters."""
+def launch_sdk(name: str, data_center_id: str, ssh_key: str, machine_type: str,
+               memory_gib: int, vcpu_count: int, gpu_count: int,
+               tags: Dict[str, str], disk_size: int):
+    """Launches an instance with the given parameters using the Cudo SDK."""
 
     request = cudo.cudo.CreateVMBody(
         ssh_key_source='SSH_KEY_SOURCE_NONE',
@@ -32,6 +35,67 @@ def launch(name: str, data_center_id: str, ssh_key: str, machine_type: str,
     vm = api.create_vm(cudo.cudo.cudo_api.project_id_throwable(), request)
 
     return vm.to_dict()['id']
+
+
+def launch(name: str, data_center_id: str, ssh_key: str, machine_type: str,
+           memory_gib: int, vcpu_count: int, gpu_count: int,
+           tags: Dict[str, str], disk_size: int, start_script: str = None, 
+           gpu_model_id: str = None):
+    """Launches an instance using direct HTTP API calls."""
+    
+    # Get API key from environment variable
+    api_key = os.getenv('CUDO_API_KEY')
+    if not api_key:
+        raise ValueError("CUDO_API_KEY environment variable is not set")
+    
+    # Get project ID from existing cudo module
+    project_id = cudo.cudo.cudo_api.project_id_throwable()
+    
+    url = f'https://rest.compute.cudo.org/v1/projects/{project_id}/vm'
+    
+    headers = {
+        'Authorization': f'bearer {api_key}',
+        'Content-Type': 'application/json',
+        'Accept': 'application/json'
+    }
+    
+    # Build the request payload
+    payload = {
+        'dataCenterId': data_center_id,
+        'machineType': machine_type,
+        'vmId': name,
+        'sshKeySource': 'SSH_KEY_SOURCE_NONE',
+        'customSshKeys': [ssh_key],
+        'bootDiskImageId': 'ubuntu-2204-nvidia-535-docker-v20240214',
+        'vcpus': vcpu_count,
+        'memoryGib': memory_gib,
+        'gpus': gpu_count,
+        'bootDisk': {
+            'storageClass': 'STORAGE_CLASS_NETWORK',
+            'sizeGib': disk_size
+        },
+        'metadata': tags
+    }
+    
+    # Add optional parameters if provided
+    if start_script:
+        payload['startScript'] = start_script
+    if gpu_model_id:
+        payload['gpuModelId'] = gpu_model_id
+    
+    try:
+        response = requests.post(url, headers=headers, data=json.dumps(payload))
+        response.raise_for_status()
+        
+        result = response.json()
+        return result.get('id')
+        
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Failed to launch VM via HTTP API: {e}")
+        if hasattr(e, 'response') and e.response is not None:
+            logger.error(f"Response status: {e.response.status_code}")
+            logger.error(f"Response body: {e.response.text}")
+        raise
 
 
 def remove(instance_id: str):

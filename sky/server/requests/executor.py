@@ -397,6 +397,8 @@ def _request_execution_wrapper(request_id: str,
             _restore_output(original_stdout, original_stderr)
             logger.info(f'Request {request_id} failed due to '
                         f'{common_utils.format_exception(e)}')
+            import traceback
+            logger.error(f'Traceback:\n{traceback.format_exc()}')
             return
         else:
             api_requests.set_request_succeeded(
