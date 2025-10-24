@@ -10,7 +10,7 @@ from sky import clouds
 from sky.server.requests import executor
 from sky.server.requests import payloads
 from sky.server.requests import requests as requests_lib
-from sky.volumes import volume
+from sky.utils import volume
 from sky.volumes.server import server
 
 
@@ -20,8 +20,9 @@ class TestVolumeServer:
     def test_volume_list_success(self, monkeypatch):
         """Test volume_list endpoint with successful request."""
         # Mock executor.schedule_request
-        mock_schedule = mock.MagicMock()
-        monkeypatch.setattr(executor, 'schedule_request', mock_schedule)
+        mock_schedule_async = mock.AsyncMock()
+        monkeypatch.setattr(executor, 'schedule_request_async',
+                            mock_schedule_async)
 
         # Create test client
         app = fastapi.FastAPI()
@@ -31,6 +32,7 @@ class TestVolumeServer:
         # Mock request state
         with mock.patch.object(fastapi.Request, 'state') as mock_state:
             mock_state.request_id = 'test-request-id'
+            mock_state.auth_user = None
 
             # Make request
             response = client.get('/volumes')
@@ -39,7 +41,7 @@ class TestVolumeServer:
             assert response.status_code == 200
 
             # Verify executor was called correctly
-            mock_schedule.assert_called_once_with(
+            mock_schedule_async.assert_called_once_with(
                 request_id='test-request-id',
                 request_name='volume_list',
                 request_body=payloads.RequestBody(),
@@ -50,8 +52,9 @@ class TestVolumeServer:
     def test_volume_delete_success(self, monkeypatch):
         """Test volume_delete endpoint with successful request."""
         # Mock executor.schedule_request
-        mock_schedule = mock.MagicMock()
-        monkeypatch.setattr(executor, 'schedule_request', mock_schedule)
+        mock_schedule_async = mock.AsyncMock()
+        monkeypatch.setattr(executor, 'schedule_request_async',
+                            mock_schedule_async)
 
         # Create test client
         app = fastapi.FastAPI()
@@ -72,8 +75,8 @@ class TestVolumeServer:
             assert response.status_code == 200
 
             # Verify executor was called correctly
-            mock_schedule.assert_called_once()
-            call_args = mock_schedule.call_args
+            mock_schedule_async.assert_called_once()
+            call_args = mock_schedule_async.call_args
             assert call_args[1]['request_id'] == 'test-request-id'
             assert call_args[1]['request_name'] == 'volume_delete'
             assert call_args[1]['func'] == server.core.volume_delete
@@ -85,15 +88,16 @@ class TestVolumeServer:
     def test_volume_apply_success_pvc(self, monkeypatch):
         """Test volume_apply endpoint with successful PVC volume creation."""
         # Mock executor.schedule_request
-        mock_schedule = mock.MagicMock()
-        monkeypatch.setattr(executor, 'schedule_request', mock_schedule)
+        mock_schedule_async = mock.AsyncMock()
+        monkeypatch.setattr(executor, 'schedule_request_async',
+                            mock_schedule_async)
 
         # Mock cloud registry
         mock_cloud = mock.MagicMock()
         mock_cloud.is_same_cloud.return_value = True
         mock_cloud_registry = mock.MagicMock()
         mock_cloud_registry.from_str.return_value = mock_cloud
-        monkeypatch.setattr('sky.volumes.server.server.sky.CLOUD_REGISTRY',
+        monkeypatch.setattr('sky.utils.registry.CLOUD_REGISTRY',
                             mock_cloud_registry)
 
         # Create test client
@@ -126,8 +130,8 @@ class TestVolumeServer:
             assert response.status_code == 200
 
             # Verify executor was called correctly
-            mock_schedule.assert_called_once()
-            call_args = mock_schedule.call_args
+            mock_schedule_async.assert_called_once()
+            call_args = mock_schedule_async.call_args
             assert call_args[1]['request_id'] == 'test-request-id'
             assert call_args[1]['request_name'] == 'volume_apply'
             assert call_args[1]['func'] == server.core.volume_apply
@@ -139,15 +143,16 @@ class TestVolumeServer:
     def test_volume_apply_success_pvc_default_access_mode(self, monkeypatch):
         """Test volume_apply endpoint with PVC volume using default access mode."""
         # Mock executor.schedule_request
-        mock_schedule = mock.MagicMock()
-        monkeypatch.setattr(executor, 'schedule_request', mock_schedule)
+        mock_schedule_async = mock.AsyncMock()
+        monkeypatch.setattr(executor, 'schedule_request_async',
+                            mock_schedule_async)
 
         # Mock cloud registry
         mock_cloud = mock.MagicMock()
         mock_cloud.is_same_cloud.return_value = True
         mock_cloud_registry = mock.MagicMock()
         mock_cloud_registry.from_str.return_value = mock_cloud
-        monkeypatch.setattr('sky.volumes.server.server.sky.CLOUD_REGISTRY',
+        monkeypatch.setattr('sky.utils.registry.CLOUD_REGISTRY',
                             mock_cloud_registry)
 
         # Create test client
@@ -178,8 +183,8 @@ class TestVolumeServer:
             assert response.status_code == 200
 
             # Verify executor was called correctly
-            mock_schedule.assert_called_once()
-            call_args = mock_schedule.call_args
+            mock_schedule_async.assert_called_once()
+            call_args = mock_schedule_async.call_args
             assert call_args[1]['request_id'] == 'test-request-id'
             assert call_args[1]['request_name'] == 'volume_apply'
             assert call_args[1]['func'] == server.core.volume_apply
@@ -189,15 +194,16 @@ class TestVolumeServer:
     def test_volume_apply_success_pvc_none_config(self, monkeypatch):
         """Test volume_apply endpoint with PVC volume and None config."""
         # Mock executor.schedule_request
-        mock_schedule = mock.MagicMock()
-        monkeypatch.setattr(executor, 'schedule_request', mock_schedule)
+        mock_schedule_async = mock.AsyncMock()
+        monkeypatch.setattr(executor, 'schedule_request_async',
+                            mock_schedule_async)
 
         # Mock cloud registry
         mock_cloud = mock.MagicMock()
         mock_cloud.is_same_cloud.return_value = True
         mock_cloud_registry = mock.MagicMock()
         mock_cloud_registry.from_str.return_value = mock_cloud
-        monkeypatch.setattr('sky.volumes.server.server.sky.CLOUD_REGISTRY',
+        monkeypatch.setattr('sky.utils.registry.CLOUD_REGISTRY',
                             mock_cloud_registry)
 
         # Create test client
@@ -226,7 +232,7 @@ class TestVolumeServer:
             assert response.status_code == 200
 
             # Verify executor was called correctly
-            mock_schedule.assert_called_once()
+            mock_schedule_async.assert_called_once()
 
     def test_volume_apply_invalid_volume_type(self, monkeypatch):
         """Test volume_apply endpoint with invalid volume type."""
@@ -262,7 +268,7 @@ class TestVolumeServer:
         # Mock cloud registry to return None
         mock_cloud_registry = mock.MagicMock()
         mock_cloud_registry.from_str.return_value = None
-        monkeypatch.setattr('sky.volumes.server.server.sky.CLOUD_REGISTRY',
+        monkeypatch.setattr('sky.utils.registry.CLOUD_REGISTRY',
                             mock_cloud_registry)
 
         # Create test client
@@ -298,7 +304,7 @@ class TestVolumeServer:
         mock_cloud.is_same_cloud.return_value = False  # Not Kubernetes
         mock_cloud_registry = mock.MagicMock()
         mock_cloud_registry.from_str.return_value = mock_cloud
-        monkeypatch.setattr('sky.volumes.server.server.sky.CLOUD_REGISTRY',
+        monkeypatch.setattr('sky.utils.registry.CLOUD_REGISTRY',
                             mock_cloud_registry)
 
         # Create test client
@@ -335,7 +341,7 @@ class TestVolumeServer:
         mock_cloud.is_same_cloud.return_value = True  # Is Kubernetes
         mock_cloud_registry = mock.MagicMock()
         mock_cloud_registry.from_str.return_value = mock_cloud
-        monkeypatch.setattr('sky.volumes.server.server.sky.CLOUD_REGISTRY',
+        monkeypatch.setattr('sky.utils.registry.CLOUD_REGISTRY',
                             mock_cloud_registry)
 
         # Create test client
@@ -370,14 +376,15 @@ class TestVolumeServer:
     def test_volume_apply_non_pvc_volume_type(self, monkeypatch):
         """Test volume_apply endpoint with non-PVC volume type."""
         # Mock executor.schedule_request
-        mock_schedule = mock.MagicMock()
-        monkeypatch.setattr(executor, 'schedule_request', mock_schedule)
+        mock_schedule_async = mock.AsyncMock()
+        monkeypatch.setattr(executor, 'schedule_request_async',
+                            mock_schedule_async)
 
         # Mock cloud registry
         mock_cloud = mock.MagicMock()
         mock_cloud_registry = mock.MagicMock()
         mock_cloud_registry.from_str.return_value = mock_cloud
-        monkeypatch.setattr('sky.volumes.server.server.sky.CLOUD_REGISTRY',
+        monkeypatch.setattr('sky.utils.registry.CLOUD_REGISTRY',
                             mock_cloud_registry)
 
         # Create test client
@@ -411,8 +418,9 @@ class TestVolumeServer:
     def test_volume_delete_empty_volume_names(self, monkeypatch):
         """Test volume_delete endpoint with empty volume names list."""
         # Mock executor.schedule_request
-        mock_schedule = mock.MagicMock()
-        monkeypatch.setattr(executor, 'schedule_request', mock_schedule)
+        mock_schedule_async = mock.AsyncMock()
+        monkeypatch.setattr(executor, 'schedule_request_async',
+                            mock_schedule_async)
 
         # Create test client
         app = fastapi.FastAPI()
@@ -433,8 +441,8 @@ class TestVolumeServer:
             assert response.status_code == 200
 
             # Verify executor was called correctly
-            mock_schedule.assert_called_once()
-            call_args = mock_schedule.call_args
+            mock_schedule_async.assert_called_once()
+            call_args = mock_schedule_async.call_args
             assert call_args[1]['request_id'] == 'test-request-id'
             assert call_args[1]['request_name'] == 'volume_delete'
             assert call_args[1]['func'] == server.core.volume_delete

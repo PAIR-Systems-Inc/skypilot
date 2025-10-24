@@ -52,6 +52,17 @@ pip install pre-commit
 pre-commit install
 ```
 
+### Generating Python files from protobuf
+Whenever any protobuf file is changed (in `sky/schemas/proto`), run this to regenerate the Python files:
+```bash
+python -m grpc_tools.protoc \
+        --proto_path=sky/schemas/generated=sky/schemas/proto \
+        --python_out=. \
+        --grpc_python_out=. \
+        --pyi_out=. \
+        sky/schemas/proto/*.proto
+```
+
 ### Testing
 
 To run smoke tests (NOTE: Running all smoke tests launches ~20 clusters):
@@ -272,21 +283,67 @@ By convention, we define API payloads in `sky/server/api/payloads.py` and there 
 - When receiving a payload from an older version without the new field, the default value is used for the missing new field.
 - When receiving a payload from a newer version with a new field, the value of the new field is ignored.
 
-However, when the value of the new field is taken from an user input (e.g. CLI flag), we should add a warning message to inform the user that the new field is ignored. An API version bump is required in this case. For example:
+However, when the value of the new field is taken from user input (e.g. CLI flag), we should warn (or throw an error) to inform the user that the new field is not supported on the current api server version. Calling `versions.get_remote_api_version()` in `sky/client/cli/command.py` will return `None` until we check the api server status which can be triggered by adding a `@server_common.check_server_healthy_or_start` decorator around the cli entry point. For example:
+
 
 ```python
 from sky.server import versions
 
 @click.option('--newflag', default=None)
+# Must have this or the version will be None!
+@server_common.check_server_healthy_or_start
 def cli_entry_point(newflag: Optional[str] = None):
     # The new flag is set but the server does not support the new field yet
     if newflag is not None and versions.get_remote_api_version() < 12:
         logger.warning('The new flag is ignored because the server does not support it yet.')
 ```
 
+We can also just check for the unsupported field in the sdk and surface the error in the cli.
+
+We should also be careful when adding new fields that are not directly visible in
+`sky/server/api/payloads.py`, but is also being sent from the client to the server. This
+is mainly for validating objects from the client.
+As an example, this request body contains a single field, the string representation of a DAG.
+
+```
+class ValidateBody(DagRequestBodyWithRequestOptions):
+    """The request body for the validate endpoint."""
+    dag: str
+```
+
+A DAG consists of Tasks, so when adding new fields to Task, we should also handle backwards
+compatibility in the serialization, otherwise the server may not recognize the new field
+from the client and return an error during validation.
+
+
+#### Adding new fields to API response body
+
+##### Adding new fields to the existing objects in the API response body
+
+When adding new fields to the existing objects that are serialized in API response bodies (such as resource handles), special care must be taken to ensure older clients can deserialize objects from newer servers. This commonly occurs with objects that are pickled and sent over the API.
+
+For example, if you add a new field like `SSHTunnelInfo` to `CloudVmRayResourceHandle`, older clients without this class definition will fail during deserialization with errors like:
+```
+AttributeError: Can't get attribute 'SSHTunnelInfo' on <module 'sky.backends.cloud_vm_ray_backend'>
+```
+
+To handle this:
+
+1. **Server-side encoding**: Modify the relevant encoders in `sky/server/requests/serializers/encoders.py` to
+remove or clean problematic fields before serialization when serving older clients.
+
+2. **Exception handling**: Update `sky/exceptions.py` if exceptions containing these objects also need
+backwards compatibility processing.
+
+See the `prepare_handle_for_backwards_compatibility` function and its usage for a concrete example of this.
+
+##### Adding new fields to the API response body
+
+When you need to add a brand-new field to the response body or change the response type (e.g., from `List` to `Dict`), prefer introducing a new API instead. See [Refactoring existing APIs](#refactoring-existing-apis) for details.
+
 #### Refactoring existing APIs
 
-Refactoring existing APIs can be tricky. It is recommended to add an new API instead. Then the compatibility issue can be addressed in the same way as [Adding new APIs](#adding-new-apis), e.g.:
+Refactoring existing APIs can be tricky. It is recommended to add a new API instead. Then the compatibility issue can be addressed in the same way as [Adding new APIs](#adding-new-apis), e.g.:
 
 - `constants.py`:
 

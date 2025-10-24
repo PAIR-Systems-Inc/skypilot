@@ -467,8 +467,18 @@ def _print_checked_cloud(
         if ok:
             enabled_capabilities.append(capability)
         # `dict` reasons for K8s and SSH will be printed in detail in
-        # _format_enabled_cloud. Skip here.
+        # _format_enabled_cloud. Skip here unless the cloud is disabled.
         if not isinstance(reason, str):
+            if not ok and isinstance(cloud_tuple[1],
+                                     (sky_clouds.SSH, sky_clouds.Kubernetes)):
+                if reason is not None:
+                    reason_str = _format_context_details(cloud_tuple[1],
+                                                         show_details=True,
+                                                         ctx2text=reason)
+                    reason_str = '\n'.join(
+                        '    ' + line for line in reason_str.splitlines())
+                    reasons_to_capabilities.setdefault(reason_str,
+                                                       []).append(capability)
             continue
         if ok:
             if reason is not None:
@@ -611,35 +621,6 @@ def _format_enabled_cloud(cloud_name: str,
     if cloud_name in [repr(sky_clouds.Kubernetes()), repr(sky_clouds.SSH())]:
         return (f'{title}' + _format_context_details(
             cloud_name, show_details=False, ctx2text=ctx2text))
-
-    if cloud_name == repr(sky_clouds.Kubernetes()):
-        # Get enabled contexts for Kubernetes
-        existing_contexts = sky_clouds.Kubernetes.existing_allowed_contexts()
-        if not existing_contexts:
-            return _green_color(cloud_and_capabilities)
-
-        # Check if allowed_contexts is explicitly set in config
-        allowed_contexts = skypilot_config.get_effective_region_config(
-            cloud='kubernetes',
-            region=None,
-            keys=('allowed_contexts',),
-            default_value=None)
-
-        # Format the context info with consistent styling
-        if allowed_contexts is not None:
-            contexts_formatted = []
-            for i, context in enumerate(existing_contexts):
-                symbol = (ux_utils.INDENT_LAST_SYMBOL
-                          if i == len(existing_contexts) -
-                          1 else ux_utils.INDENT_SYMBOL)
-                contexts_formatted.append(f'\n    {symbol}{context}')
-            context_info = f'  Allowed contexts:{"".join(contexts_formatted)}'
-        else:
-            context_info = f'  Active context: {existing_contexts[0]}'
-
-        return (f'{_green_color(cloud_and_capabilities)}\n'
-                f'  {colorama.Style.DIM}{context_info}'
-                f'{colorama.Style.RESET_ALL}')
     return _green_color(cloud_and_capabilities)
 
 

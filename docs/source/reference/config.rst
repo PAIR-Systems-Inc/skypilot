@@ -29,6 +29,8 @@ Below is the configuration syntax and some example values. See detailed explanat
     :ref:`endpoint <config-yaml-api-server-endpoint>`: \http://xx.xx.xx.xx:8000
     :ref:`service_account_token <config-yaml-api-server-service-account-token>`: sky_xxx
     :ref:`requests_retention_hours <config-yaml-api-server-requests-gc-retention-hours>`: 24
+    :ref:`cluster_event_retention_hours <config-yaml-api-server-cluster-event-retention-hours>`: 24
+    :ref:`cluster_debug_event_retention_hours <config-yaml-api-server-cluster-debug-event-retention-hours>`: 720
 
   :ref:`allowed_clouds <config-yaml-allowed-clouds>`:
     - aws
@@ -37,6 +39,7 @@ Below is the configuration syntax and some example values. See detailed explanat
 
   :ref:`jobs <config-yaml-jobs>`:
     :ref:`bucket <config-yaml-jobs-bucket>`: s3://my-bucket/
+    :ref:`force_disable_cloud_bucket <config-yaml-jobs-force-disable-cloud-bucket>`: false
     controller:
       :ref:`resources <config-yaml-jobs-controller-resources>`:  # same spec as 'resources' in a task YAML
         infra: gcp/us-central1
@@ -106,10 +109,13 @@ Below is the configuration syntax and some example values. See detailed explanat
     :ref:`ssh_proxy_command <config-yaml-aws-ssh-proxy-command>`: ssh -W %h:%p user@host
     :ref:`security_group_name <config-yaml-aws-security-group-name>`: my-security-group
     :ref:`disk_encrypted <config-yaml-aws-disk-encrypted>`: false
+    :ref:`ssh_user <config-yaml-aws-ssh-user>`: ubuntu
     :ref:`prioritize_reservations <config-yaml-aws-prioritize-reservations>`: false
     :ref:`specific_reservations <config-yaml-aws-specific-reservations>`:
       - cr-a1234567
     :ref:`remote_identity <config-yaml-aws-remote-identity>`: LOCAL_CREDENTIALS
+    :ref:`post_provision_runcmd <config-yaml-aws-post-provision-runcmd>`:
+      - echo "hello world!"
 
   :ref:`gcp <config-yaml-gcp>`:
     :ref:`labels <config-yaml-gcp-labels>`:
@@ -135,31 +141,36 @@ Below is the configuration syntax and some example values. See detailed explanat
     :ref:`storage_account <config-yaml-azure-storage-account>`: user-storage-account-name
 
   :ref:`oci <config-yaml-oci>`:
-    :ref:`default <config-yaml-oci>`:
-      oci_config_profile: SKY_PROVISION_PROFILE
-      compartment_ocid: ocid1.compartment.oc1..aaaaaaaahr7aicqtodxmcfor6pbqn3hvsngpftozyxzqw36gj4kh3w3kkj4q
-      image_tag_general: skypilot:cpu-oraclelinux8
-      image_tag_gpu: skypilot:gpu-oraclelinux8
-    :ref:`ap-seoul-1 <config-yaml-oci>`:
-      vcn_ocid: ocid1.vcn.oc1.ap-seoul-1.amaaaaaaak7gbriarkfs2ssus5mh347ktmi3xa72tadajep6asio3ubqgarq
-      vcn_subnet: ocid1.subnet.oc1.ap-seoul-1.aaaaaaaa5c6wndifsij6yfyfehmi3tazn6mvhhiewqmajzcrlryurnl7nuja
-    :ref:`us-ashburn-1 <config-yaml-oci>`:
-      vcn_ocid: ocid1.vcn.oc1.ap-seoul-1.amaaaaaaak7gbriarkfs2ssus5mh347ktmi3xa72tadajep6asio3ubqgarq
-      vcn_subnet: ocid1.subnet.oc1.iad.aaaaaaaafbj7i3aqc4ofjaapa5edakde6g4ea2yaslcsay32cthp7qo55pxa
+    region_configs:
+      :ref:`default <config-yaml-oci>`:
+        oci_config_profile: SKY_PROVISION_PROFILE
+        compartment_ocid: ocid1.compartment.oc1..aaaaaaaahr7aicqtodxmcfor6pbqn3hvsngpftozyxzqw36gj4kh3w3kkj4q
+        image_tag_general: skypilot:cpu-oraclelinux8
+        image_tag_gpu: skypilot:gpu-oraclelinux8
+      :ref:`ap-seoul-1 <config-yaml-oci>`:
+        vcn_ocid: ocid1.vcn.oc1.ap-seoul-1.amaaaaaaak7gbriarkfs2ssus5mh347ktmi3xa72tadajep6asio3ubqgarq
+        vcn_subnet: ocid1.subnet.oc1.ap-seoul-1.aaaaaaaa5c6wndifsij6yfyfehmi3tazn6mvhhiewqmajzcrlryurnl7nuja
+      :ref:`us-ashburn-1 <config-yaml-oci>`:
+        vcn_ocid: ocid1.vcn.oc1.ap-seoul-1.amaaaaaaak7gbriarkfs2ssus5mh347ktmi3xa72tadajep6asio3ubqgarq
+        vcn_subnet: ocid1.subnet.oc1.iad.aaaaaaaafbj7i3aqc4ofjaapa5edakde6g4ea2yaslcsay32cthp7qo55pxa
 
   :ref:`nebius <config-yaml-nebius>`:
-    :ref:`eu-north1 <config-yaml-nebius>`:
-      project_id: project-e00xxxxxxxxxxx
-      fabric: fabric-3
-      filesystems:
-      - filesystem_id: computefilesystem-e00xwrry01ysvykbhf
-        mount_path: /mnt/fsnew
-        attach_mode: READ_WRITE
-    :ref:`eu-west1 <config-yaml-nebius>`:
-      project_id: project-e01xxxxxxxxxxx
-      fabric: fabric-5
+    region_configs:
+      :ref:`eu-north1 <config-yaml-nebius>`:
+        project_id: project-e00xxxxxxxxxxx
+        fabric: fabric-3
+        filesystems:
+        - filesystem_id: computefilesystem-e00xwrry01ysvykbhf
+          mount_path: /mnt/fsnew
+          attach_mode: READ_WRITE
+      :ref:`eu-west1 <config-yaml-nebius>`:
+        project_id: project-e01xxxxxxxxxxx
+        fabric: fabric-5
     :ref:`use_internal_ips <config-yaml-nebius-use-internal-ips>`: true
+    :ref:`use_static_ip_address <config-yaml-nebius-use-static-ip-address>`: true
     :ref:`ssh_proxy_command <config-yaml-nebius-ssh-proxy-command>`: ssh -W %h:%p user@host
+    :ref:`tenant_id <config-yaml-nebius-tenant-id>`: tenant-1234567890
+    :ref:`domain <config-yaml-nebius-domain>`: api.nebius.cloud:443
 
   :ref:`rbac <config-yaml-rbac>`:
     :ref:`default_role <config-yaml-rbac-default-role>`: admin
@@ -171,6 +182,9 @@ Below is the configuration syntax and some example values. See detailed explanat
     gcp:
       project_id: my-project-id
 
+  :ref:`daemons <config-yaml-daemons>`:
+    skypilot-status-refresh-daemon:
+      log_level: DEBUG
 
 Fields
 ----------
@@ -217,7 +231,7 @@ Retention period for finished requests in hours (optional). Set to a negative va
 
 Requests GC will remove request entries in `sky api status`, i.e., the logs and status of the requests. All the launched resources (clusters/jobs) will still be correctly running.
 
-Default: ``24`` (1 day).
+Default: ``24.0`` (1 day).
 
 Example:
 
@@ -225,6 +239,42 @@ Example:
 
   api_server:
     requests_retention_hours: -1 # Disable requests GC
+
+.. _config-yaml-api-server-cluster-event-retention-hours:
+
+``api_server.cluster_event_retention_hours``
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Retention period for cluster events in hours (optional). Set to a negative value to disable cluster event GC.
+
+Cluster event GC will remove cluster event entries in `sky status -v`, i.e., the logs and status of the cluster events.
+
+Default: ``24.0`` (1 day).
+
+Example:
+
+.. code-block:: yaml
+
+  api_server:
+    cluster_event_retention_hours: -1 # Disable all cluster event GC
+
+.. _config-yaml-api-server-cluster-debug-event-retention-hours:
+
+``api_server.cluster_debug_event_retention_hours``
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Retention period for cluster events in hours (optional). Set to a negative value to disable cluster event GC.
+
+Cluster event GC will remove debug cluster event entries in `sky status -v`, i.e., the logs and status of the cluster events.
+
+Default: ``720.0`` (30 days).
+
+Example:
+
+.. code-block:: yaml
+
+  api_server:
+    cluster_debug_event_retention_hours: -1 # Disable all cluster event GC
 
 .. _config-yaml-jobs:
 
@@ -257,6 +307,26 @@ Supported bucket types:
     # bucket: https://<azure_storage_account>.blob.core.windows.net/<container>
     # bucket: r2://my-bucket/
     # bucket: cos://<region>/<bucket>
+
+.. _config-yaml-jobs-force-disable-cloud-bucket:
+
+``jobs.force_disable_cloud_bucket``
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Force-disable using a cloud bucket for storing intermediate job files (optional).
+
+If set to ``true``, SkyPilot will not use cloud object storage as an intermediate storage for files for managed jobs, even if cloud storage is available.
+
+Files will be uploaded directly to the jobs controller and downloaded on to the job nodes from there (two-hop trasnfer). Useful in environments where use of cloud buckets must be avoided.
+
+Default: ``false``.
+
+Example:
+
+.. code-block:: yaml
+
+  jobs:
+    force_disable_cloud_bucket: true
 
 .. _config-yaml-jobs-controller:
 .. _config-yaml-jobs-controller-resources:
@@ -603,6 +673,15 @@ SkyPilot. This is useful for compliance with data protection regulations.
 
 Default: ``false``.
 
+.. _config-yaml-aws-ssh-user:
+
+``aws.ssh_user``
+~~~~~~~~~~~~~~~~
+
+SSH user (optional) for the SkyPilot nodes.
+
+Default: ``ubuntu``.
+
 .. _config-yaml-aws-prioritize-reservations:
 
 ``aws.prioritize_reservations``
@@ -708,6 +787,30 @@ Supported values:
       - sky-serve-controller-*: my-service-account-2
       - "*": my-default-service-account
 
+.. _config-yaml-aws-post-provision-runcmd:
+
+``aws.post_provision_runcmd``
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Run commands during the instance initialization phase (optional).
+
+This is executed through cloud-init's ``runcmd``, which is useful for doing any setup that must happen right after the instance starts, such as:
+
+- Configuring system settings
+- Installing certificates
+- Installing packages
+
+Each item can be either a string or a list.
+
+Example:
+
+.. code-block:: yaml
+
+  aws:
+    post_provision_runcmd:
+      - echo "hello world!"
+      - [ls, -l, /]
+
 
 .. _config-yaml-gcp:
 
@@ -799,7 +902,7 @@ Default: ``false``.
 Should instances in a vpc where communicated with via internal IPs still
 have an external IP? (optional).
 
-Set to ``true`` to force VMs to be assigned an exteral IP even when
+Set to ``true`` to force VMs to be assigned an external IP even when
 ``vpc_name`` and ``use_internal_ips`` are set.
 
 Default: ``false``.
@@ -1029,6 +1132,17 @@ List of allowed Kubernetes contexts (optional).
 
 List of context names that SkyPilot is allowed to use.
 
+If you want all available contexts to be allowed, set it to 'all' like this:
+
+.. code-block:: yaml
+
+  kubernetes:
+    allowed_contexts: all
+
+
+You can also set ``SKYPILOT_ALLOW_ALL_KUBERNETES_CONTEXTS`` environment variable to ``"true"``
+for the same effect. Configuration option overrides the environment variable if set.
+
 .. _config-yaml-kubernetes-custom-metadata:
 
 ``kubernetes.custom_metadata``
@@ -1045,7 +1159,7 @@ Custom labels and annotations to apply to all Kubernetes resources.
 
 Timeout for resource provisioning (optional).
 
-Timeout in minutes for resource provisioning.
+Timeout in seconds for resource provisioning.
 
 Default: ``10``.
 
@@ -1062,6 +1176,7 @@ Can be one of:
 
 - ``gke``: Google Kubernetes Engine
 - ``karpenter``: Karpenter
+- ``coreweave``: `CoreWeave autoscaler <https://docs.coreweave.com/docs/products/cks/nodes/autoscaling>`_
 - ``generic``: Generic autoscaler, assumes nodes are labelled with ``skypilot.co/accelerator``.
 
 .. _config-yaml-kubernetes-pod-config:
@@ -1116,6 +1231,17 @@ Example:
             emptyDir:
                 medium: Memory
                 sizeLimit: 3Gi
+
+By default, SkyPilot automatically creates a single container named ``ray-node`` in the Pod. While you typically don't need to explicitly set the container name, if you do specify ``pod_config.spec.containers[0].name``, it must be set to ``ray-node``:
+
+.. code-block:: yaml
+
+  kubernetes:
+    pod_config:
+      spec:
+        containers:
+          - name: ray-node
+            ...
 
 .. _config-yaml-kubernetes-kueue:
 
@@ -1237,15 +1363,16 @@ Example:
 
     oci:
         # Region-specific configuration
-        ap-seoul-1:
-          # The OCID of the VCN to use for instances (optional).
-          vcn_ocid: ocid1.vcn.oc1.ap-seoul-1.amaaaaaaak7gbriarkfs2ssus5mh347ktmi3xa72tadajep6asio3ubqgarq
-          # The OCID of the subnet to use for instances (optional).
-          vcn_subnet: ocid1.subnet.oc1.ap-seoul-1.aaaaaaaa5c6wndifsij6yfyfehmi3tazn6mvhhiewqmajzcrlryurnl7nuja
+        region_configs:
+          ap-seoul-1:
+            # The OCID of the VCN to use for instances (optional).
+            vcn_ocid: ocid1.vcn.oc1.ap-seoul-1.amaaaaaaak7gbriarkfs2ssus5mh347ktmi3xa72tadajep6asio3ubqgarq
+            # The OCID of the subnet to use for instances (optional).
+            vcn_subnet: ocid1.subnet.oc1.ap-seoul-1.aaaaaaaa5c6wndifsij6yfyfehmi3tazn6mvhhiewqmajzcrlryurnl7nuja
 
-        us-ashburn-1:
-          vcn_ocid: ocid1.vcn.oc1.ap-seoul-1.amaaaaaaak7gbriarkfs2ssus5mh347ktmi3xa72tadajep6asio3ubqgarq
-          vcn_subnet: ocid1.subnet.oc1.iad.aaaaaaaafbj7i3aqc4ofjaapa5edakde6g4ea2yaslcsay32cthp7qo55pxa
+          us-ashburn-1:
+            vcn_ocid: ocid1.vcn.oc1.ap-seoul-1.amaaaaaaak7gbriarkfs2ssus5mh347ktmi3xa72tadajep6asio3ubqgarq
+            vcn_subnet: ocid1.subnet.oc1.iad.aaaaaaaafbj7i3aqc4ofjaapa5edakde6g4ea2yaslcsay32cthp7qo55pxa
 
 .. _config-yaml-nebius:
 
@@ -1274,35 +1401,38 @@ Advanced Nebius configuration (optional).
 
       Defaults to ``/mnt/filesystem-skypilot-<index>``.
 
-The configuration must be specified in region-specific sections.
+The configuration must be specified in the per-region config section: ``region_configs``.
 
 Example:
 
 .. code-block:: yaml
 
     nebius:
-        :ref:`use_internal_ips <config-yaml-nebius-use-internal-ips>`: true
-        :ref:`ssh_proxy_command <config-yaml-nebius-ssh-proxy-command>`: ssh -W %h:%p user@host
+        use_internal_ips: true
+        use_static_ip_address: true
+        ssh_proxy_command:
           eu-north1: ssh -W %h:%p -p 1234 -o StrictHostKeyChecking=no myself@my.us-central1.proxy
           eu-west1: ssh -W %h:%p -i ~/.ssh/sky-key -o StrictHostKeyChecking=no nebiususer@<jump server public ip>
+        tenant_id: tenant-1234567890
         # Region-specific configuration
-        eu-north1:
-            # Project identifier for this region
-            # Optional: Uses first available project if not specified
-            project_id: project-e00......
-            # GPU cluster fabric identifier
-            # Optional: GPU cluster disabled if not specified
-            fabric: fabric-3
-        eu-west1:
-            project_id: project-e01...
-            fabric: fabric-5
-            filesystems:
-              - filesystem_id: computefilesystem-e00aaaaa01bbbbbbbb
-                mount_path: /mnt/fsnew
-                attach_mode: READ_WRITE
-              - filesystem_id: computefilesystem-e00ccccc02dddddddd
-                mount_path: /mnt/fsnew2
-                attach_mode: READ_ONLY
+        region_configs:
+            eu-north1:
+                # Project identifier for this region
+                # Optional: Uses first available project if not specified
+                project_id: project-e00......
+                # GPU cluster fabric identifier
+                # Optional: GPU cluster disabled if not specified
+                fabric: fabric-3
+            eu-west1:
+                project_id: project-e01...
+                fabric: fabric-5
+                filesystems:
+                  - filesystem_id: computefilesystem-e00aaaaa01bbbbbbbb
+                    mount_path: /mnt/fsnew
+                    attach_mode: READ_WRITE
+                  - filesystem_id: computefilesystem-e00ccccc02dddddddd
+                    mount_path: /mnt/fsnew2
+                    attach_mode: READ_ONLY
 
 
 .. _config-yaml-nebius-use-internal-ips:
@@ -1316,6 +1446,17 @@ Set to ``true`` to use private IPs to communicate between the local client and
 any SkyPilot nodes. This requires the networking stack be properly set up.
 
 This flag is typically set together with ``ssh_proxy_command`` below.
+
+Default: ``false``.
+
+.. _config-yaml-nebius-use-static-ip-address:
+
+``nebius.use_static_ip_address``
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Should instances be assigned static IPs? (optional).
+
+Set to ``true`` to use static IPs.
 
 Default: ``false``.
 
@@ -1348,6 +1489,35 @@ Example:
       eu-north1: ssh -W %h:%p -p 1234 -o StrictHostKeyChecking=no myself@my.us-central1.proxy
       eu-west1: ssh -W %h:%p -i ~/.ssh/sky-key -o StrictHostKeyChecking=no nebiususer@<jump server public ip>
 
+.. _config-yaml-nebius-tenant-id:
+
+``nebius.tenant_id``
+~~~~~~~~~~~~~~~~~~~~
+
+Nebius tenant ID (optional).
+
+Example:
+
+.. code-block:: yaml
+
+  nebius:
+    tenant_id: tenant-1234567890
+
+.. _config-yaml-nebius-domain:
+
+``nebius.domain``
+~~~~~~~~~~~~~~~~~~~~
+
+Nebius API domain (optional).
+
+Example:
+
+.. code-block:: yaml
+
+  nebius:
+    domain: api.nebius.cloud:443
+
+
 .. _config-yaml-rbac:
 
 ``rbac``
@@ -1364,7 +1534,9 @@ Default role for users (optional).  Either ``admin`` or ``user``.
 
 If not specified, the default role is ``admin``.
 
-Note: RBAC is only functional when :ref:`Auth Proxy <api-server-auth-proxy>` or :ref:`Basic Auth in API server <api-server-basic-auth>` is configured.
+.. TODO(aylei): Refine this after unified authentication.
+
+Note: RBAC is only functional when :ref:`OAuth <api-server-oauth>` is configured.
 
 .. _config-yaml-db:
 
@@ -1430,3 +1602,31 @@ The type of external logging storage to use. Each logging storage might have its
 
   logs:
     store: gcp
+
+.. _config-yaml-daemons:
+
+``daemons``
+~~~~~~~~~~~
+
+Daemon configuration (optional).
+
+Configuration for API server daemons. Not applicable to client side config.
+
+Valid daemon names are:
+
+- ``skypilot-status-refresh-daemon``
+- ``skypilot-volume-status-refresh-daemon``
+- ``managed-job-status-refresh-daemon``
+
+``log_level``
+    Log level to set for the daemon. Valid values are ``DEBUG``, ``INFO`` and ``WARNING``.
+
+.. code-block:: yaml
+
+  daemons:
+    skypilot-status-refresh-daemon:
+      log_level: DEBUG
+    skypilot-volume-status-refresh-daemon:
+      log_level: INFO
+    managed-job-status-refresh-daemon:
+      log_level: WARNING

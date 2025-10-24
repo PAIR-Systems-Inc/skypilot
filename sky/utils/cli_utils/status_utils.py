@@ -6,10 +6,12 @@ import click
 import colorama
 
 from sky import backends
+from sky.schemas.api import responses
 from sky.utils import common_utils
 from sky.utils import log_utils
 from sky.utils import resources_utils
 from sky.utils import status_lib
+from sky.utils import ux_utils
 
 if typing.TYPE_CHECKING:
     from sky.provision.kubernetes import utils as kubernetes_utils
@@ -44,7 +46,7 @@ class StatusColumn:
         return val
 
 
-def show_status_table(cluster_records: List[_ClusterRecord],
+def show_status_table(cluster_records: List[responses.StatusResponse],
                       show_all: bool,
                       show_user: bool,
                       query_clusters: Optional[List[str]] = None,
@@ -81,6 +83,7 @@ def show_status_table(cluster_records: List[_ClusterRecord],
                          _get_command,
                          truncate=not show_all,
                          show_by_default=False),
+            StatusColumn('LAST_EVENT', _get_last_event, show_by_default=False),
         ]
 
     columns = []
@@ -103,11 +106,9 @@ def show_status_table(cluster_records: List[_ClusterRecord],
 
     if query_clusters:
         cluster_names = {record['name'] for record in cluster_records}
-        not_found_clusters = [
-            repr(cluster)
-            for cluster in query_clusters
-            if cluster not in cluster_names
-        ]
+        not_found_clusters = ux_utils.get_non_matched_query(
+            query_clusters, cluster_names)
+        not_found_clusters = [repr(cluster) for cluster in not_found_clusters]
         if not_found_clusters:
             cluster_str = 'Cluster'
             if len(not_found_clusters) > 1:
@@ -314,6 +315,14 @@ def _get_head_ip(cluster_record: _ClusterRecord, truncate: bool = True) -> str:
     return handle.head_ip
 
 
+def _get_last_event(cluster_record: _ClusterRecord,
+                    truncate: bool = True) -> str:
+    del truncate
+    if cluster_record.get('last_event', None) is None:
+        return 'No recorded events.'
+    return cluster_record['last_event']
+
+
 def _is_pending_autostop(cluster_record: _ClusterRecord) -> bool:
     # autostop < 0 means nothing scheduled.
     return cluster_record['autostop'] >= 0 and _get_status(
@@ -401,7 +410,7 @@ def _get_estimated_cost_for_cost_report(
 
 
 def show_kubernetes_cluster_status_table(
-        clusters: List['kubernetes_utils.KubernetesSkyPilotClusterInfo'],
+        clusters: List['kubernetes_utils.KubernetesSkyPilotClusterInfoPayload'],
         show_all: bool) -> None:
     """Compute cluster table values and display for Kubernetes clusters."""
     status_columns = [

@@ -34,6 +34,7 @@ import { useMobile } from '@/hooks/useMobile';
 import Head from 'next/head';
 import { formatYaml } from '@/lib/yamlUtils';
 import { UserDisplay } from '@/components/elements/UserDisplay';
+import { YamlHighlighter } from '@/components/YamlHighlighter';
 
 // Helper function to format autostop information, similar to _get_autostop in CLI utils
 const formatAutostop = (autostop, toDown) => {
@@ -107,7 +108,7 @@ function ClusterDetails() {
     try {
       const grafanaUrl = getGrafanaUrl();
       const endpoint =
-        '/api/datasources/proxy/1/api/v1/label/label_skypilot_cluster/values';
+        '/api/datasources/proxy/uid/prometheus/api/v1/label/label_skypilot_cluster/values';
 
       const response = await fetch(`${grafanaUrl}${endpoint}`, {
         method: 'GET',
@@ -122,7 +123,7 @@ function ClusterDetails() {
         if (data.data && data.data.length > 0) {
           // Find cluster that matches our current cluster name as prefix
           const matchingCluster = data.data.find((cluster) =>
-            cluster.startsWith(clusterData.cluster)
+            cluster.startsWith(clusterData.cluster_name_on_cloud)
           );
           if (matchingCluster) {
             setMatchedClusterName(matchingCluster);
@@ -166,7 +167,9 @@ function ClusterDetails() {
 
       setHistoryLoading(true);
       try {
-        const historyData = await dashboardCache.get(getClusterHistory);
+        const historyData = await dashboardCache.get(getClusterHistory, [
+          cluster,
+        ]);
         const foundHistoryCluster = historyData.find(
           (c) => c.cluster_hash === cluster || c.cluster === cluster
         );
@@ -460,7 +463,18 @@ function ActiveTab({
                   Cluster
                 </div>
                 <div className="text-base mt-1">
-                  {clusterData.cluster || clusterData.name}
+                  {clusterData.cluster_name_on_cloud ? (
+                    <NonCapitalizedTooltip
+                      content={`Name on ${clusterData.cloud || clusterData.infra?.split('(')[0]?.trim() || 'cloud'}: ${clusterData.cluster_name_on_cloud}`}
+                      className="text-sm text-muted-foreground"
+                    >
+                      <span className="border-b border-dotted border-gray-400 cursor-help">
+                        {clusterData.cluster || clusterData.name}
+                      </span>
+                    </NonCapitalizedTooltip>
+                  ) : (
+                    clusterData.cluster || clusterData.name
+                  )}
                 </div>
               </div>
               <div>
@@ -527,7 +541,19 @@ function ActiveTab({
                     : 'N/A'}
                 </div>
               </div>
-
+              <div>
+                <div className="text-gray-600 font-medium text-base">
+                  Last Event
+                </div>
+                <div className="text-base mt-1">
+                  <NonCapitalizedTooltip
+                    content={clusterData.last_event || '-'}
+                    className="text-sm text-muted-foreground"
+                  >
+                    <span>{clusterData.last_event || '-'}</span>
+                  </NonCapitalizedTooltip>
+                </div>
+              </div>
               {/* Show duration and cost for historical clusters */}
               {isHistoricalCluster ? (
                 <>
@@ -648,12 +674,12 @@ function ActiveTab({
 
                           {isYamlExpanded && (
                             <div className="bg-gray-50 border border-gray-200 rounded-md p-3 max-h-96 overflow-y-auto">
-                              <pre className="text-sm text-gray-800 font-mono whitespace-pre-wrap">
+                              <YamlHighlighter className="whitespace-pre-wrap">
                                 {formatYaml(
                                   clusterData.task_yaml ||
                                     clusterData.last_creation_yaml
                                 )}
-                              </pre>
+                              </YamlHighlighter>
                             </div>
                           )}
                         </div>
@@ -782,6 +808,7 @@ function ActiveTab({
             clusterJobData={clusterJobData}
             loading={clusterJobsLoading}
             refreshClusterJobsOnly={refreshClusterJobsOnly}
+            workspace={clusterData.workspace}
           />
         </div>
       )}

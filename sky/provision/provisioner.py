@@ -18,6 +18,7 @@ from sky import exceptions
 from sky import global_user_state
 from sky import logs
 from sky import provision
+from sky import resources as resources_lib
 from sky import sky_logging
 from sky import skypilot_config
 from sky.adaptors import aws
@@ -69,6 +70,7 @@ def _bulk_provision(
 
     provision_record = provision.run_instances(provider_name,
                                                region_name,
+                                               str(cluster_name),
                                                cluster_name.name_on_cloud,
                                                config=config)
 
@@ -76,7 +78,8 @@ def _bulk_provision(
     logger.debug(f'\nWaiting for instances of {cluster_name!r} to be ready...')
     rich_utils.force_update_status(
         ux_utils.spinner_message('Launching - Checking instance status',
-                                 str(provision_logging.config.log_path)))
+                                 str(provision_logging.config.log_path),
+                                 cluster_name=str(cluster_name)))
     # AWS would take a very short time (<<1s) updating the state of the
     # instance.
     time.sleep(1)
@@ -99,6 +102,12 @@ def _bulk_provision(
     logger.debug(
         f'\nProvisioning {cluster_name!r} took {time.time() - start:.2f} '
         f'seconds.')
+
+    # Add cluster event for provisioning completion.
+    global_user_state.add_cluster_event(
+        str(cluster_name), status_lib.ClusterStatus.INIT,
+        f'Instances launched on {cloud.display_name()} in {region}',
+        global_user_state.ClusterEventType.STATUS_CHANGE)
 
     return provision_record
 
@@ -160,7 +169,7 @@ def bulk_provision(
             # This error is a user error instead of a provisioning failure.
             # And there is no possibility to fix it by teardown.
             raise
-        except Exception:  # pylint: disable=broad-except
+        except Exception as exc:  # pylint: disable=broad-except
             zone_str = 'all zones'
             if zones:
                 zone_str = ','.join(zone.name for zone in zones)
@@ -182,14 +191,18 @@ def bulk_provision(
                         provider_config=original_config['provider'])
                     break
                 except NotImplementedError as e:
-                    verb = 'terminate' if terminate else 'stop'
+                    assert not terminate, (
+                        'Terminating must be supported by all clouds')
+                    exc_msg = common_utils.format_exception(exc).replace(
+                        '\n', ' ')
                     # If the underlying cloud does not support stopping
                     # instances, we should stop failover as well.
                     raise provision_common.StopFailoverError(
-                        'During provisioner\'s failover, '
-                        f'{terminate_str.lower()} {cluster_name!r} failed. '
-                        f'We cannot {verb} the resources launched, as it is '
-                        f'not supported by {cloud}. Please try launching the '
+                        f'Provisioning cluster {cluster_name.display_name} '
+                        f'failed: {exc_msg}. Failover is stopped for safety '
+                        'because the cluster was previously in UP state but '
+                        f'{cloud} does not support stopping instances to '
+                        'preserve the cluster state. Please try launching the '
                         'cluster again, or terminate it with: '
                         f'sky down {cluster_name.display_name}') from e
                 except Exception as e:  # pylint: disable=broad-except
@@ -416,17 +429,26 @@ def wait_for_ssh(cluster_info: provision_common.ClusterInfo,
 
 
 def _post_provision_setup(
-        cloud_name: str, cluster_name: resources_utils.ClusterName,
-        handle_cluster_yaml: str,
+        launched_resources: resources_lib.Resources,
+        cluster_name: resources_utils.ClusterName, handle_cluster_yaml: str,
         provision_record: provision_common.ProvisionRecord,
         custom_resource: Optional[str]) -> provision_common.ClusterInfo:
     config_from_yaml = global_user_state.get_cluster_yaml_dict(
         handle_cluster_yaml)
     provider_config = config_from_yaml.get('provider')
+    cloud_name = repr(launched_resources.cloud)
     cluster_info = provision.get_cluster_info(cloud_name,
                                               provision_record.region,
                                               cluster_name.name_on_cloud,
                                               provider_config=provider_config)
+
+    # Update cluster info in handle so cluster instance ids are set. This
+    # allows us to expose provision logs to debug nodes that failed during post
+    # provision setup.
+    handle = global_user_state.get_handle_from_cluster_name(
+        cluster_name.display_name)
+    handle.cached_cluster_info = cluster_info
+    global_user_state.update_cluster_handle(cluster_name.display_name, handle)
 
     if cluster_info.num_instances > 1:
         # Only worker nodes have logs in the per-instance log directory. Head
@@ -456,9 +478,9 @@ def _post_provision_setup(
     docker_config = config_from_yaml.get('docker', {})
 
     with rich_utils.safe_status(
-            ux_utils.spinner_message(
-                'Launching - Waiting for SSH access',
-                provision_logging.config.log_path)) as status:
+            ux_utils.spinner_message('Launching - Waiting for SSH access',
+                                     provision_logging.config.log_path,
+                                     cluster_name=str(cluster_name))) as status:
         # If on Kubernetes, skip SSH check since the pods are guaranteed to be
         # ready by the provisioner, and we use kubectl instead of SSH to run the
         # commands and rsync on the pods. SSH will still be ready after a while
@@ -487,7 +509,8 @@ def _post_provision_setup(
             status.update(
                 ux_utils.spinner_message(
                     'Launching - Initializing docker container',
-                    provision_logging.config.log_path))
+                    provision_logging.config.log_path,
+                    cluster_name=str(cluster_name)))
             docker_user = instance_setup.initialize_docker(
                 cluster_name.name_on_cloud,
                 docker_config=docker_config,
@@ -514,6 +537,7 @@ def _post_provision_setup(
             status.update(
                 ux_utils.spinner_message(
                     'Checking controller version compatibility'))
+
             try:
                 server_jobs_utils.check_version_mismatch_and_non_terminal_jobs()
             except exceptions.ClusterNotUpError:
@@ -535,7 +559,8 @@ def _post_provision_setup(
 
         runtime_preparation_str = (ux_utils.spinner_message(
             'Preparing SkyPilot runtime ({step}/3 - {step_name})',
-            provision_logging.config.log_path))
+            provision_logging.config.log_path,
+            cluster_name=str(cluster_name)))
         status.update(
             runtime_preparation_str.format(step=1, step_name='initializing'))
         instance_setup.internal_file_mounts(cluster_name.name_on_cloud,
@@ -673,24 +698,27 @@ def _post_provision_setup(
         if logging_agent:
             status.update(
                 ux_utils.spinner_message('Setting up logging agent',
-                                         provision_logging.config.log_path))
+                                         provision_logging.config.log_path,
+                                         cluster_name=str(cluster_name)))
             instance_setup.setup_logging_on_cluster(logging_agent, cluster_name,
                                                     cluster_info,
                                                     ssh_credentials)
 
-        instance_setup.start_skylet_on_head_node(cluster_name.name_on_cloud,
-                                                 cluster_info, ssh_credentials)
+        instance_setup.start_skylet_on_head_node(cluster_name, cluster_info,
+                                                 ssh_credentials,
+                                                 launched_resources)
 
     logger.info(
         ux_utils.finishing_message(f'Cluster launched: {cluster_name}.',
-                                   provision_logging.config.log_path))
+                                   provision_logging.config.log_path,
+                                   cluster_name=str(cluster_name)))
     return cluster_info
 
 
 @timeline.event
 def post_provision_runtime_setup(
-        cloud_name: str, cluster_name: resources_utils.ClusterName,
-        handle_cluster_yaml: str,
+        launched_resources: resources_lib.Resources,
+        cluster_name: resources_utils.ClusterName, handle_cluster_yaml: str,
         provision_record: provision_common.ProvisionRecord,
         custom_resource: Optional[str],
         log_dir: str) -> provision_common.ClusterInfo:
@@ -711,7 +739,7 @@ def post_provision_runtime_setup(
         try:
             logger.debug(_TITLE.format('System Setup After Provision'))
             return _post_provision_setup(
-                cloud_name,
+                launched_resources,
                 cluster_name,
                 handle_cluster_yaml=handle_cluster_yaml,
                 provision_record=provision_record,

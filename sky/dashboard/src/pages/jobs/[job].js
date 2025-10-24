@@ -3,7 +3,7 @@ import { CircularProgress } from '@mui/material';
 import { useRouter } from 'next/router';
 import { Layout } from '@/components/elements/layout';
 import { Card } from '@/components/ui/card';
-import { useSingleManagedJob } from '@/data/connectors/jobs';
+import { useSingleManagedJob, getPoolStatus } from '@/data/connectors/jobs';
 import Link from 'next/link';
 import {
   RotateCwIcon,
@@ -11,25 +11,33 @@ import {
   ChevronRightIcon,
   CopyIcon,
   CheckIcon,
+  Download,
 } from 'lucide-react';
 import {
   CustomTooltip as Tooltip,
   formatFullTimestamp,
+  renderPoolLink,
 } from '@/components/utils';
-import { LogFilter, formatLogs } from '@/components/utils';
-import { streamManagedJobLogs } from '@/data/connectors/jobs';
+import { LogFilter, formatLogs, stripAnsiCodes } from '@/components/utils';
+import {
+  streamManagedJobLogs,
+  downloadManagedJobLogs,
+} from '@/data/connectors/jobs';
 import { StatusBadge } from '@/components/elements/StatusBadge';
 import { useMobile } from '@/hooks/useMobile';
 import Head from 'next/head';
 import { NonCapitalizedTooltip } from '@/components/utils';
 import { formatJobYaml } from '@/lib/yamlUtils';
 import { UserDisplay } from '@/components/elements/UserDisplay';
+import { YamlHighlighter } from '@/components/YamlHighlighter';
+import dashboardCache from '@/lib/cache';
 
 function JobDetails() {
   const router = useRouter();
   const { job: jobId, tab } = router.query;
   const [refreshTrigger, setRefreshTrigger] = useState(0);
   const { jobData, loading } = useSingleManagedJob(jobId, refreshTrigger);
+  const [poolsData, setPoolsData] = useState([]);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isInitialLoad, setIsInitialLoad] = useState(true);
   const [isLoadingLogs, setIsLoadingLogs] = useState(false);
@@ -46,6 +54,20 @@ function JobDetails() {
       setIsInitialLoad(false);
     }
   }, [loading, isInitialLoad]);
+
+  // Fetch pools data for hash comparison
+  useEffect(() => {
+    async function fetchPoolsData() {
+      try {
+        const poolsResponse = await dashboardCache.get(getPoolStatus, [{}]);
+        setPoolsData(poolsResponse.pools || []);
+      } catch (error) {
+        console.error('Error fetching pools data:', error);
+        setPoolsData([]);
+      }
+    }
+    fetchPoolsData();
+  }, []);
 
   // Function to scroll to a specific section
   const scrollToSection = (sectionId) => {
@@ -215,6 +237,7 @@ function JobDetails() {
                     isLoadingLogs={isLoadingLogs}
                     isLoadingControllerLogs={isLoadingControllerLogs}
                     refreshFlag={0}
+                    poolsData={poolsData}
                   />
                 </div>
               </Card>
@@ -231,20 +254,40 @@ function JobDetails() {
                       logs.)
                     </span>
                   </div>
-                  <Tooltip
-                    content="Refresh logs"
-                    className="text-muted-foreground"
-                  >
-                    <button
-                      onClick={handleLogsRefresh}
-                      disabled={isLoadingLogs}
-                      className="text-sky-blue hover:text-sky-blue-bright flex items-center"
+                  <div className="flex items-center space-x-3">
+                    <Tooltip
+                      content="Download full logs"
+                      className="text-muted-foreground"
                     >
-                      <RotateCwIcon
-                        className={`w-4 h-4 ${isLoadingLogs ? 'animate-spin' : ''}`}
-                      />
-                    </button>
-                  </Tooltip>
+                      <button
+                        onClick={() =>
+                          downloadManagedJobLogs({
+                            jobId: parseInt(
+                              Array.isArray(jobId) ? jobId[0] : jobId
+                            ),
+                            controller: false,
+                          })
+                        }
+                        className="text-sky-blue hover:text-sky-blue-bright flex items-center"
+                      >
+                        <Download className="w-4 h-4" />
+                      </button>
+                    </Tooltip>
+                    <Tooltip
+                      content="Refresh logs"
+                      className="text-muted-foreground"
+                    >
+                      <button
+                        onClick={handleLogsRefresh}
+                        disabled={isLoadingLogs}
+                        className="text-sky-blue hover:text-sky-blue-bright flex items-center"
+                      >
+                        <RotateCwIcon
+                          className={`w-4 h-4 ${isLoadingLogs ? 'animate-spin' : ''}`}
+                        />
+                      </button>
+                    </Tooltip>
+                  </div>
                 </div>
                 <div className="p-4">
                   <JobDetailsContent
@@ -255,6 +298,7 @@ function JobDetails() {
                     isLoadingLogs={isLoadingLogs}
                     isLoadingControllerLogs={isLoadingControllerLogs}
                     refreshFlag={refreshLogsFlag}
+                    poolsData={poolsData}
                   />
                 </div>
               </Card>
@@ -271,20 +315,40 @@ function JobDetails() {
                       logs.)
                     </span>
                   </div>
-                  <Tooltip
-                    content="Refresh controller logs"
-                    className="text-muted-foreground"
-                  >
-                    <button
-                      onClick={handleControllerLogsRefresh}
-                      disabled={isLoadingControllerLogs}
-                      className="text-sky-blue hover:text-sky-blue-bright flex items-center"
+                  <div className="flex items-center space-x-3">
+                    <Tooltip
+                      content="Download full controller logs"
+                      className="text-muted-foreground"
                     >
-                      <RotateCwIcon
-                        className={`w-4 h-4 ${isLoadingControllerLogs ? 'animate-spin' : ''}`}
-                      />
-                    </button>
-                  </Tooltip>
+                      <button
+                        onClick={() =>
+                          downloadManagedJobLogs({
+                            jobId: parseInt(
+                              Array.isArray(jobId) ? jobId[0] : jobId
+                            ),
+                            controller: true,
+                          })
+                        }
+                        className="text-sky-blue hover:text-sky-blue-bright flex items-center"
+                      >
+                        <Download className="w-4 h-4" />
+                      </button>
+                    </Tooltip>
+                    <Tooltip
+                      content="Refresh controller logs"
+                      className="text-muted-foreground"
+                    >
+                      <button
+                        onClick={handleControllerLogsRefresh}
+                        disabled={isLoadingControllerLogs}
+                        className="text-sky-blue hover:text-sky-blue-bright flex items-center"
+                      >
+                        <RotateCwIcon
+                          className={`w-4 h-4 ${isLoadingControllerLogs ? 'animate-spin' : ''}`}
+                        />
+                      </button>
+                    </Tooltip>
+                  </div>
                 </div>
                 <div className="p-4">
                   <JobDetailsContent
@@ -295,6 +359,7 @@ function JobDetails() {
                     isLoadingLogs={isLoadingLogs}
                     isLoadingControllerLogs={isLoadingControllerLogs}
                     refreshFlag={refreshControllerLogsFlag}
+                    poolsData={poolsData}
                   />
                 </div>
               </Card>
@@ -318,6 +383,7 @@ function JobDetailsContent({
   isLoadingLogs,
   isLoadingControllerLogs,
   refreshFlag,
+  poolsData,
 }) {
   // Change from array to string for better performance
   const [logs, setLogs] = useState('');
@@ -501,22 +567,6 @@ function JobDetailsContent({
     setHasReceivedFirstChunk(false);
   }, [activeTab, jobData.id]);
 
-  // Performance-optimized log update function
-  const updateLogsWithBatching = useCallback(
-    (logType, newChunk) => {
-      const setLogsFunction = logType === 'logs' ? setLogs : setControllerLogs;
-
-      // Simple string append - no batching needed with backend tail
-      setLogsFunction((prevLogs) => prevLogs + newChunk);
-
-      // Auto-scroll after update
-      requestAnimationFrame(() => {
-        scrollToBottom(logType);
-      });
-    },
-    [scrollToBottom]
-  );
-
   // Define a function to handle both log types with simplified logic
   const fetchLogs = useCallback(
     (logType, jobId, setLogs, setIsLoading, isRefreshing = false) => {
@@ -571,26 +621,87 @@ function JobDetailsContent({
           jobId: jobId,
           controller: logType === 'controllerlogs',
           signal: controller.signal,
-          onNewLog: (log) => {
+          onNewLog: (chunk) => {
             if (active) {
-              const strippedLog = formatLogs(log);
-
               // Set first chunk received flag for immediate display
               if (!hasReceivedFirstChunk) {
                 setHasReceivedFirstChunk(true);
               }
 
-              // Use batched updates for performance
-              updateLogsWithBatching(logType, strippedLog);
+              const setLogsFunction =
+                logType === 'logs' ? setLogs : setControllerLogs;
 
-              // Update length tracking
-              if (logType === 'logs') {
-                setCurrentLogLength((prev) => prev + strippedLog.length);
-              } else {
-                setCurrentControllerLogLength(
-                  (prev) => prev + strippedLog.length
-                );
-              }
+              setLogsFunction((prevLogs) => {
+                // Split the chunk into lines
+                const newLines = chunk
+                  .split('\n')
+                  .filter((line) => line.trim());
+
+                let updatedLogs = prevLogs;
+
+                for (const line of newLines) {
+                  // Clean the line (remove ANSI codes)
+                  const cleanLine = stripAnsiCodes(line);
+
+                  // Check if this is a progress bar line
+                  const isProgressBar = /\d+%\s*\|/.test(cleanLine);
+
+                  if (isProgressBar) {
+                    // Extract process identifier from the new line
+                    const processMatch = cleanLine.match(/^\(([^)]+)\)/);
+
+                    if (processMatch && updatedLogs) {
+                      // Look for the last progress bar from the same process in existing logs
+                      const existingLines = updatedLogs.split('\n');
+                      let replaced = false;
+
+                      // Search from the end for efficiency
+                      for (let i = existingLines.length - 1; i >= 0; i--) {
+                        const existingLine = existingLines[i];
+                        if (/\d+%\s*\|/.test(existingLine)) {
+                          const existingProcessMatch =
+                            existingLine.match(/^\(([^)]+)\)/);
+                          if (
+                            existingProcessMatch &&
+                            existingProcessMatch[1] === processMatch[1]
+                          ) {
+                            // Found a progress bar from the same process, replace it
+                            existingLines[i] = cleanLine;
+                            updatedLogs = existingLines.join('\n');
+                            replaced = true;
+                            break;
+                          }
+                        }
+                      }
+
+                      if (!replaced) {
+                        // No existing progress bar from this process, append
+                        updatedLogs += (updatedLogs ? '\n' : '') + cleanLine;
+                      }
+                    } else {
+                      // First line or no process match, just append
+                      updatedLogs += (updatedLogs ? '\n' : '') + cleanLine;
+                    }
+                  } else {
+                    // Regular log line, just append
+                    updatedLogs += (updatedLogs ? '\n' : '') + cleanLine;
+                  }
+                }
+
+                // Update length tracking
+                if (logType === 'logs') {
+                  setCurrentLogLength(updatedLogs.length);
+                } else {
+                  setCurrentControllerLogLength(updatedLogs.length);
+                }
+
+                return updatedLogs;
+              });
+
+              // Auto-scroll after update
+              requestAnimationFrame(() => {
+                scrollToBottom(logType);
+              });
             }
           },
         })
@@ -693,7 +804,6 @@ function JobDetailsContent({
       hasReceivedFirstChunk,
       safeAbort,
       scrollToBottom,
-      updateLogsWithBatching,
     ]
   );
 
@@ -969,6 +1079,17 @@ function JobDetailsContent({
         </div>
       </div>
       <div>
+        <div className="text-gray-600 font-medium text-base">Workspace</div>
+        <div className="text-base mt-1">
+          <Link
+            href="/workspaces"
+            className="text-gray-700 hover:text-blue-600 hover:underline"
+          >
+            {jobData.workspace || 'default'}
+          </Link>
+        </div>
+      </div>
+      <div>
         <div className="text-gray-600 font-medium text-base">Submitted</div>
         <div className="text-base mt-1">
           {jobData.submitted_at
@@ -1012,6 +1133,44 @@ function JobDetailsContent({
         <div className="text-gray-600 font-medium text-base">Resources</div>
         <div className="text-base mt-1">
           {jobData.resources_str_full || jobData.resources_str || '-'}
+        </div>
+      </div>
+      <div>
+        <div className="text-gray-600 font-medium text-base">Git Commit</div>
+        <div className="text-base mt-1 flex items-center">
+          {jobData.git_commit && jobData.git_commit !== '-' ? (
+            <span className="flex items-center mr-2">
+              {jobData.git_commit}
+              <Tooltip
+                content={isCopied ? 'Copied!' : 'Copy commit'}
+                className="text-muted-foreground"
+              >
+                <button
+                  onClick={async () => {
+                    await navigator.clipboard.writeText(jobData.git_commit);
+                    setIsCopied(true);
+                    setTimeout(() => setIsCopied(false), 2000);
+                  }}
+                  className="flex items-center text-gray-500 hover:text-gray-700 transition-colors duration-200 p-1 ml-2"
+                >
+                  {isCopied ? (
+                    <CheckIcon className="w-4 h-4 text-green-600" />
+                  ) : (
+                    <CopyIcon className="w-4 h-4" />
+                  )}
+                </button>
+              </Tooltip>
+            </span>
+          ) : (
+            <span className="text-gray-400">-</span>
+          )}
+        </div>
+      </div>
+
+      <div>
+        <div className="text-gray-600 font-medium text-base">Worker Pool</div>
+        <div className="text-base mt-1">
+          {renderPoolLink(jobData.pool, jobData.pool_hash, poolsData)}
         </div>
       </div>
 
@@ -1097,9 +1256,9 @@ function JobDetailsContent({
                       } else if (yamlDocs.length === 1) {
                         // Single document - show directly
                         return (
-                          <pre className="text-sm text-gray-800 font-mono whitespace-pre-wrap">
+                          <YamlHighlighter className="whitespace-pre-wrap">
                             {yamlDocs[0].content}
-                          </pre>
+                          </YamlHighlighter>
                         );
                       } else {
                         // Multiple documents - show with collapsible sections
@@ -1127,9 +1286,9 @@ function JobDetailsContent({
                                 </button>
                                 {expandedYamlDocs[index] && (
                                   <div className="mt-3 ml-6">
-                                    <pre className="text-sm text-gray-800 font-mono whitespace-pre-wrap">
+                                    <YamlHighlighter className="whitespace-pre-wrap">
                                       {doc.content}
-                                    </pre>
+                                    </YamlHighlighter>
                                   </div>
                                 )}
                               </div>

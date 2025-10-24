@@ -112,6 +112,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          token: ${{ secrets.GH_PAT_FOR_RELEASE }}
 
       - name: Create and push tag
         run: |
@@ -128,6 +129,7 @@ jobs:
           tag_name: "v${{ needs.extract-version.outputs.version }}"
           generate_release_notes: true
           draft: true
+          token: ${{ secrets.GH_PAT_FOR_RELEASE }}
 
   cleanup-branches:
     needs: extract-version

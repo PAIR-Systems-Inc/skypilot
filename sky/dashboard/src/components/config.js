@@ -171,9 +171,12 @@ export function Config() {
             <button
               onClick={() => {
                 const grafanaUrl = getGrafanaUrl();
-                const host = window.location.hostname;
+                // Get app name from environment variable
+                const releaseName =
+                  process.env.SKYPILOT_RELEASE_NAME || 'skypilot';
+                const appName = `${releaseName}-api`;
                 window.open(
-                  `${grafanaUrl}/d/skypilot-apiserver-overview/skypilot-api-server?orgId=1&from=now-1h&to=now&timezone=browser&var-app=${host}`,
+                  `${grafanaUrl}/d/skypilot-apiserver-overview/skypilot-api-server?orgId=1&from=now-1h&to=now&timezone=browser&var-app=${appName}`,
                   '_blank'
                 );
               }}
@@ -303,7 +306,7 @@ export function Config() {
             <Button
               onClick={handleSave}
               disabled={loading || saving}
-              className="inline-flex items-center bg-blue-600 hover:bg-blue-700 text-white"
+              className="inline-flex items-center bg-sky-600 hover:bg-sky-700 text-white"
             >
               {saving ? (
                 <>

@@ -3,7 +3,6 @@ import os
 import re
 import subprocess
 import tempfile
-import typing
 from typing import Dict, Iterator, List, Optional, Set, Tuple, Union
 
 import colorama
@@ -11,6 +10,7 @@ import colorama
 from sky import catalog
 from sky import clouds
 from sky import exceptions
+from sky import resources as resources_lib
 from sky import sky_logging
 from sky import skypilot_config
 from sky.adaptors import kubernetes
@@ -25,15 +25,12 @@ from sky.provision.kubernetes.utils import normalize_tpu_accelerator_name
 from sky.skylet import constants
 from sky.utils import annotations
 from sky.utils import common_utils
+from sky.utils import env_options
 from sky.utils import kubernetes_enums
 from sky.utils import registry
 from sky.utils import resources_utils
 from sky.utils import schemas
-from sky.volumes import volume as volume_lib
-
-if typing.TYPE_CHECKING:
-    # Renaming to avoid shadowing variables.
-    from sky import resources as resources_lib
+from sky.utils import volume as volume_lib
 
 logger = sky_logging.init_logger(__name__)
 
@@ -51,9 +48,6 @@ _FUSERMOUNT_SHARED_DIR = '/var/run/fusermount'
 class Kubernetes(clouds.Cloud):
     """Kubernetes."""
 
-    SKY_SSH_KEY_SECRET_NAME = 'sky-ssh-keys'
-    SKY_SSH_JUMP_NAME = 'sky-ssh-jump-pod'
-
     # Limit the length of the cluster name to avoid exceeding the limit of 63
     # characters for Kubernetes resources. We limit to 42 characters (63-21) to
     # allow additional characters for creating ingress services to expose ports.
@@ -61,9 +55,12 @@ class Kubernetes(clouds.Cloud):
     # where the suffix is 21 characters long.
     _MAX_CLUSTER_NAME_LEN_LIMIT = 42
 
+    _MAX_VOLUME_NAME_LEN_LIMIT = 253
+
     _SUPPORTS_SERVICE_ACCOUNT_ON_REMOTE = True
 
     _DEFAULT_NUM_VCPUS = 2
+    _DEFAULT_NUM_VCPUS_WITH_GPU = 4
     _DEFAULT_MEMORY_CPU_RATIO = 1
     _DEFAULT_MEMORY_CPU_RATIO_WITH_GPU = 4  # Allocate more memory for GPU tasks
     _REPR = 'Kubernetes'
@@ -84,8 +81,8 @@ class Kubernetes(clouds.Cloud):
             ('Customized multiple network interfaces are not supported in '
              'Kubernetes.'),
         clouds.CloudImplementationFeatures.CUSTOM_NETWORK_TIER:
-            ('Custom network tier is currently not supported in '
-             f'{_REPR}.'),
+            ('Custom network tier is not supported in this Kubernetes '
+             'cluster.'),
     }
 
     IMAGE_CPU = 'skypilot:custom-cpu-ubuntu-2004'
@@ -98,14 +95,6 @@ class Kubernetes(clouds.Cloud):
 
     # Set of contexts that has logged as temporarily unreachable
     logged_unreachable_contexts: Set[str] = set()
-
-    @property
-    def ssh_key_secret_field_name(self):
-        # Use a fresh user hash to avoid conflicts in the secret object naming.
-        # This can happen when the controller is reusing the same user hash
-        # through USER_ID_ENV_VAR but has a different SSH key.
-        fresh_user_hash = common_utils.generate_user_hash()
-        return f'ssh-publickey-{fresh_user_hash}'
 
     @classmethod
     def _unsupported_features_for_resources(
@@ -188,6 +177,12 @@ class Kubernetes(clouds.Cloud):
         all_contexts = [
             ctx for ctx in all_contexts if not ctx.startswith('ssh-')
         ]
+
+        allow_all_contexts = allowed_contexts == 'all' or (
+            allowed_contexts is None and
+            env_options.Options.ALLOW_ALL_KUBERNETES_CONTEXTS.get())
+        if allow_all_contexts:
+            allowed_contexts = all_contexts
 
         if allowed_contexts is None:
             # Try kubeconfig if present
@@ -349,10 +344,12 @@ class Kubernetes(clouds.Cloud):
             cls,
             cpus: Optional[str] = None,
             memory: Optional[str] = None,
-            disk_tier: Optional['resources_utils.DiskTier'] = None) -> str:
+            disk_tier: Optional['resources_utils.DiskTier'] = None,
+            region: Optional[str] = None,
+            zone: Optional[str] = None) -> str:
         # TODO(romilb): In the future, we may want to move the instance type
         #  selection + availability checking to a kubernetes_catalog module.
-        del disk_tier  # Unused.
+        del disk_tier, region, zone  # Unused.
         # We strip '+' from resource requests since Kubernetes can provision
         # exactly the requested resources.
         instance_cpus = float(
@@ -516,9 +513,6 @@ class Kubernetes(clouds.Cloud):
             return image_id
 
         image_id = _get_image_id(resources)
-        # TODO(romilb): Create a lightweight image for SSH jump host
-        ssh_jump_image = catalog.get_image_id_from_tag(self.IMAGE_CPU,
-                                                       clouds='kubernetes')
 
         # Set environment variables for the pod. Note that SkyPilot env vars
         # are set separately when the task is run. These env vars are
@@ -545,7 +539,8 @@ class Kubernetes(clouds.Cloud):
                 tpu_requested = True
                 k8s_resource_key = kubernetes_utils.TPU_RESOURCE_KEY
             else:
-                k8s_resource_key = kubernetes_utils.get_gpu_resource_key()
+                k8s_resource_key = kubernetes_utils.get_gpu_resource_key(
+                    context)
         else:
             # If no GPUs are requested, we set NVIDIA_VISIBLE_DEVICES=none to
             # maintain GPU isolation. This is to override the default behavior
@@ -614,12 +609,9 @@ class Kubernetes(clouds.Cloud):
             if clouds.CloudImplementationFeatures.CUSTOM_NETWORK_TIER \
                     not in unsupported_features:
                 # Add high-performance networking environment variables for
-                # Nebius (GCP environment variables are handled directly in
-                # the template)
-                if (network_type == KubernetesHighPerformanceNetworkType.NEBIUS
-                   ):
-                    network_env_vars = network_type.get_network_env_vars()
-                    k8s_env_vars.update(network_env_vars)
+                # clusters with high performance networking
+                network_env_vars = network_type.get_network_env_vars()
+                k8s_env_vars.update(network_env_vars)
 
         # We specify object-store-memory to be 500MB to avoid taking up too
         # much memory on the head node. 'num-cpus' should be set to limit
@@ -694,13 +686,8 @@ class Kubernetes(clouds.Cloud):
             'accelerator_count': str(acc_count),
             'timeout': str(timeout),
             'k8s_port_mode': port_mode.value,
-            'k8s_networking_mode': network_utils.get_networking_mode(
-                None, context=context).value,
-            'k8s_ssh_key_secret_name': self.SKY_SSH_KEY_SECRET_NAME,
             'k8s_acc_label_key': k8s_acc_label_key,
             'k8s_acc_label_values': k8s_acc_label_values,
-            'k8s_ssh_jump_name': self.SKY_SSH_JUMP_NAME,
-            'k8s_ssh_jump_image': ssh_jump_image,
             'k8s_service_account_name': k8s_service_account_name,
             'k8s_automount_sa_token': 'true',
             'k8s_fuse_device_required': fuse_device_required,
@@ -734,13 +721,15 @@ class Kubernetes(clouds.Cloud):
                 (constants.PERSISTENT_RUN_SCRIPT_DIR),
             'k8s_high_availability_restarting_signal_file':
                 (constants.PERSISTENT_RUN_RESTARTING_SIGNAL_FILE),
-            'ha_recovery_log_path': constants.HA_PERSISTENT_RECOVERY_LOG_PATH,
+            'ha_recovery_log_path':
+                constants.HA_PERSISTENT_RECOVERY_LOG_PATH.format(''),
             'sky_python_cmd': constants.SKY_PYTHON_CMD,
             'k8s_high_availability_storage_class_name':
                 (k8s_ha_storage_class_name),
             'avoid_label_keys': avoid_label_keys,
             'k8s_enable_flex_start': enable_flex_start,
             'k8s_max_run_duration_seconds': max_run_duration_seconds,
+            'k8s_network_type': network_type.value,
         }
 
         # Add kubecontext if it is set. It may be None if SkyPilot is running
@@ -769,11 +758,25 @@ class Kubernetes(clouds.Cloud):
 
         return deploy_vars
 
+    @staticmethod
+    def _warn_on_disk_size(resources: 'resources_lib.Resources'):
+        if resources.disk_size != resources_lib.DEFAULT_DISK_SIZE_GB:
+            logger.info(f'{colorama.Style.DIM}Disk size {resources.disk_size} '
+                        'is not supported by Kubernetes. '
+                        'To add additional disk, use volumes.'
+                        f'{colorama.Style.RESET_ALL}')
+        if resources.disk_tier is not None:
+            logger.info(f'{colorama.Style.DIM}Disk tier {resources.disk_tier} '
+                        'is not supported by Kubernetes. '
+                        'To add additional disk, use volumes.'
+                        f'{colorama.Style.RESET_ALL}')
+
     def _get_feasible_launchable_resources(
         self, resources: 'resources_lib.Resources'
     ) -> 'resources_utils.FeasibleResources':
         # TODO(zhwu): This needs to be updated to return the correct region
         # (context) that has enough resources.
+        self._warn_on_disk_size(resources)
         fuzzy_candidate_list: List[str] = []
         if resources.instance_type is not None:
             assert resources.is_launchable(), resources
@@ -806,7 +809,9 @@ class Kubernetes(clouds.Cloud):
         default_instance_type = Kubernetes.get_default_instance_type(
             cpus=resources.cpus,
             memory=resources.memory,
-            disk_tier=resources.disk_tier)
+            disk_tier=resources.disk_tier,
+            region=resources.region,
+            zone=resources.zone)
 
         if accelerators is None:
             # For CPU only clusters, need no special handling
@@ -815,12 +820,18 @@ class Kubernetes(clouds.Cloud):
             assert len(accelerators) == 1, resources
             # GPUs requested - build instance type.
             acc_type, acc_count = list(accelerators.items())[0]
+            # If acc_type contains spaces, return empty list since Kubernetes
+            # does not support spaces in label values
+            if ' ' in acc_type:
+                return resources_utils.FeasibleResources([], [], None)
 
             # Parse into KubernetesInstanceType
             k8s_instance_type = (kubernetes_utils.KubernetesInstanceType.
                                  from_instance_type(default_instance_type))
 
             gpu_task_cpus = k8s_instance_type.cpus
+            if resources.cpus is None:
+                gpu_task_cpus = self._DEFAULT_NUM_VCPUS_WITH_GPU * acc_count
             # Special handling to bump up memory multiplier for GPU instances
             gpu_task_memory = (float(resources.memory.strip('+')) if
                                resources.memory is not None else gpu_task_cpus *
@@ -985,7 +996,7 @@ class Kubernetes(clouds.Cloud):
 
         all_contexts = kubernetes_utils.get_all_kube_context_names()
 
-        if region not in all_contexts:
+        if region and region not in all_contexts:
             raise ValueError(
                 f'Context {region} not found in kubeconfig. Kubernetes only '
                 'supports context names as regions. Available '
@@ -1022,6 +1033,31 @@ class Kubernetes(clouds.Cloud):
             identity = [cls.get_identity_from_context(context)]
             identities.append(identity)
         return identities
+
+    @classmethod
+    def is_volume_name_valid(cls,
+                             volume_name: str) -> Tuple[bool, Optional[str]]:
+        """Validates that the volume name is valid for this cloud.
+
+        Follows Kubernetes DNS-1123 subdomain rules:
+        - must be <= 253 characters
+        - must match: '[a-z0-9]([-a-z0-9]*[a-z0-9])?(.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*' # pylint: disable=line-too-long
+        """
+        # Max length per DNS-1123 subdomain
+        if len(volume_name) > cls._MAX_VOLUME_NAME_LEN_LIMIT:
+            return (False, f'Volume name exceeds the maximum length of '
+                    f'{cls._MAX_VOLUME_NAME_LEN_LIMIT} characters '
+                    '(DNS-1123 subdomain).')
+
+        # DNS-1123 label: [a-z0-9]([-a-z0-9]*[a-z0-9])?
+        label = r'[a-z0-9]([-a-z0-9]*[a-z0-9])?'
+        # DNS-1123 subdomain: label(\.-separated label)*
+        subdomain_pattern = rf'^{label}(\.{label})*$'
+        if re.fullmatch(subdomain_pattern, volume_name) is None:
+            return (False, 'Volume name must be a valid DNS-1123 subdomain: '
+                    'lowercase alphanumeric, "-", and "."; start/end with '
+                    'alphanumeric.')
+        return True, None
 
     @classmethod
     def is_label_valid(cls, label_key: str,
@@ -1090,6 +1126,10 @@ class Kubernetes(clouds.Cloud):
                         if label_key.startswith('nebius.com/'):
                             return (KubernetesHighPerformanceNetworkType.NEBIUS,
                                     '')
+                        if label_key.startswith('ib.coreweave.cloud/'):
+                            return (
+                                KubernetesHighPerformanceNetworkType.COREWEAVE,
+                                '')
 
                     # Check for GKE clusters with specific GPUDirect variants
                     machine_family = node.metadata.labels.get(

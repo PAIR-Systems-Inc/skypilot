@@ -27,7 +27,7 @@ from sky.utils import ux_utils
 if typing.TYPE_CHECKING:
     from sky import resources as resources_lib
     from sky.utils import status_lib
-    from sky.volumes import volume as volume_lib
+    from sky.utils import volume as volume_lib
 
 
 class CloudImplementationFeatures(enum.Enum):
@@ -341,14 +341,23 @@ class Cloud:
         raise NotImplementedError
 
     @classmethod
-    def get_default_instance_type(
-            cls,
-            cpus: Optional[str] = None,
-            memory: Optional[str] = None,
-            disk_tier: Optional[resources_utils.DiskTier] = None
+    def get_arch_from_instance_type(
+        cls,
+        instance_type: str,
     ) -> Optional[str]:
-        """Returns the default instance type with the given #vCPUs, memory and
-        disk tier.
+        """Returns the arch of the instance type, if any."""
+        raise NotImplementedError
+
+    @classmethod
+    def get_default_instance_type(cls,
+                                  cpus: Optional[str] = None,
+                                  memory: Optional[str] = None,
+                                  disk_tier: Optional[
+                                      resources_utils.DiskTier] = None,
+                                  region: Optional[str] = None,
+                                  zone: Optional[str] = None) -> Optional[str]:
+        """Returns the default instance type with the given #vCPUs, memory,
+        disk tier, region, and zone.
 
         For example, if cpus='4', this method returns the default instance type
         with 4 vCPUs.  If cpus='4+', this method returns the default instance
@@ -393,6 +402,21 @@ class Cloud:
         # If a cloud does not support labels, they are ignored. Only clouds
         # that support labels implement this method.
         del label_key, label_value
+        return True, None
+
+    @classmethod
+    def is_volume_name_valid(cls,
+                             volume_name: str) -> Tuple[bool, Optional[str]]:
+        """Validates that the volume name is valid for this cloud.
+
+        Returns:
+            A tuple of a boolean indicating whether the volume name is valid
+            and an optional string describing the reason if the volume name
+            is invalid.
+        """
+        # If a cloud does not support volume, they are ignored. Only clouds
+        # that support volume implement this method.
+        del volume_name
         return True, None
 
     @timeline.event

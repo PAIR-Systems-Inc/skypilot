@@ -16,7 +16,7 @@ from sky.utils import resources_utils
 
 if typing.TYPE_CHECKING:
     from sky import resources as resources_lib
-    from sky.volumes import volume as volume_lib
+    from sky.utils import volume as volume_lib
 
 _INDENT_PREFIX = '    '
 
@@ -52,14 +52,13 @@ class Nebius(clouds.Cloud):
     _CLOUD_UNSUPPORTED_FEATURES = {
         clouds.CloudImplementationFeatures.AUTODOWN:
             ('Autodown not supported. Can\'t delete OS disk.'),
-        clouds.CloudImplementationFeatures.SPOT_INSTANCE:
-            ('Spot is not supported, as Nebius API does not implement spot.'),
         clouds.CloudImplementationFeatures.CLONE_DISK_FROM_CLUSTER:
             (f'Migrating disk is currently not supported on {_REPR}.'),
         clouds.CloudImplementationFeatures.CUSTOM_DISK_TIER:
             (f'Custom disk tier is currently not supported on {_REPR}.'),
         clouds.CloudImplementationFeatures.CUSTOM_NETWORK_TIER:
-            ('Custom network tier is currently not supported on Nebius.'),
+            ('Custom network tier is currently only supported for '
+             'H100:8 and H200:8 on Nebius.'),
         clouds.CloudImplementationFeatures.HIGH_AVAILABILITY_CONTROLLERS:
             ('High availability controllers are not supported on Nebius.'),
         clouds.CloudImplementationFeatures.CUSTOM_MULTI_NETWORK:
@@ -88,7 +87,8 @@ class Nebius(clouds.Cloud):
             for acc_name, acc_count in resources.accelerators.items():
                 if acc_name.lower() in ('h100', 'h200') and acc_count == 8:
                     # Remove CUSTOM_NETWORK_TIER from unsupported features for
-                    # InfiniBand-capable accelerators
+                    # InfiniBand-capable accelerators. Refer to:
+                    # https://docs.nebius.com/compute/clusters/gpu#fabrics
                     unsupported.pop(
                         clouds.CloudImplementationFeatures.CUSTOM_NETWORK_TIER,
                         None)
@@ -107,8 +107,6 @@ class Nebius(clouds.Cloud):
                               zone: Optional[str]) -> List[clouds.Region]:
         assert zone is None, 'Nebius does not support zones.'
         del accelerators, zone  # unused
-        if use_spot:
-            return []
         regions = catalog.get_region_zones_for_instance_type(
             instance_type, use_spot, 'nebius')
 
@@ -175,16 +173,19 @@ class Nebius(clouds.Cloud):
         return isinstance(other, Nebius)
 
     @classmethod
-    def get_default_instance_type(
-            cls,
-            cpus: Optional[str] = None,
-            memory: Optional[str] = None,
-            disk_tier: Optional[resources_utils.DiskTier] = None
-    ) -> Optional[str]:
+    def get_default_instance_type(cls,
+                                  cpus: Optional[str] = None,
+                                  memory: Optional[str] = None,
+                                  disk_tier: Optional[
+                                      resources_utils.DiskTier] = None,
+                                  region: Optional[str] = None,
+                                  zone: Optional[str] = None) -> Optional[str]:
         """Returns the default instance type for Nebius."""
         return catalog.get_default_instance_type(cpus=cpus,
                                                  memory=memory,
                                                  disk_tier=disk_tier,
+                                                 region=region,
+                                                 zone=zone,
                                                  clouds='nebius')
 
     @classmethod
@@ -219,21 +220,20 @@ class Nebius(clouds.Cloud):
             acc_dict)
         platform, _ = resources.instance_type.split('_')
 
-        if platform in ('cpu-d3', 'cpu-e2'):
-            image_family = 'ubuntu22.04-driverless'
-        elif platform in ('gpu-h100-sxm', 'gpu-h200-sxm', 'gpu-l40s-a'):
-            image_family = 'ubuntu22.04-cuda12'
+        # Selecting image_family by platform
+        # https://docs.nebius.com/compute/storage/boot-disk-images
+        if platform.startswith('cpu'):
+            image_family = 'ubuntu24.04-driverless'
+        elif platform.startswith('gpu'):
+            image_family = 'ubuntu24.04-cuda12'
         else:
             raise RuntimeError('Unsupported instance type for Nebius cloud:'
                                f' {resources.instance_type}')
 
         config_fs = skypilot_config.get_effective_region_config(
             cloud='nebius',
-            region=None,
-            keys=(
-                region.name,
-                'filesystems',
-            ),
+            region=region.name,
+            keys=('filesystems',),
             default_value=[])
         resources_vars_fs = []
         for i, fs in enumerate(config_fs):
@@ -245,13 +245,17 @@ class Nebius(clouds.Cloud):
                 'filesystem_mount_tag': f'filesystem-skypilot-{i+1}'
             })
 
+        use_static_ip_address = skypilot_config.get_nested(
+            ('nebius', 'use_static_ip_address'), default_value=False)
         resources_vars: Dict[str, Any] = {
             'instance_type': resources.instance_type,
             'custom_resources': custom_resources,
+            'use_static_ip_address': use_static_ip_address,
             'region': region.name,
             'image_id': image_family,
             # Nebius does not support specific zones.
             'zones': None,
+            'use_spot': resources.use_spot,
             'filesystems': resources_vars_fs,
             'network_tier': resources.network_tier
         }
@@ -318,7 +322,9 @@ class Nebius(clouds.Cloud):
             default_instance_type = Nebius.get_default_instance_type(
                 cpus=resources.cpus,
                 memory=resources.memory,
-                disk_tier=resources.disk_tier)
+                disk_tier=resources.disk_tier,
+                region=resources.region,
+                zone=resources.zone)
             if default_instance_type is None:
                 # TODO: Add hints to all return values in this method to help
                 #  users understand why the resources are not launchable.
@@ -335,6 +341,7 @@ class Nebius(clouds.Cloud):
              acc_count,
              use_spot=resources.use_spot,
              cpus=resources.cpus,
+             memory=resources.memory,
              region=resources.region,
              zone=resources.zone,
              clouds='nebius')
@@ -354,16 +361,16 @@ class Nebius(clouds.Cloud):
             f'{_INDENT_PREFIX}  $ nebius iam get-access-token > {nebius.iam_token_path()} \n'  # pylint: disable=line-too-long
             f'{_INDENT_PREFIX} or generate  {nebius.credentials_path()} \n')
 
-        tenant_msg = (f'{_INDENT_PREFIX} Copy your tenat ID from the web console and save it to file \n'  # pylint: disable=line-too-long
+        tenant_msg = (f'{_INDENT_PREFIX} Copy your tenant ID from the web console and save it to file \n'  # pylint: disable=line-too-long
                       f'{_INDENT_PREFIX}  $ echo $NEBIUS_TENANT_ID_PATH > {nebius.tenant_id_path()} \n'  # pylint: disable=line-too-long
                       f'{_INDENT_PREFIX} Or if you have 1 tenant you can run:\n'  # pylint: disable=line-too-long
                       f'{_INDENT_PREFIX}  $ nebius --format json iam whoami|jq -r \'.user_profile.tenants[0].tenant_id\' > {nebius.tenant_id_path()} \n')  # pylint: disable=line-too-long
         if not nebius.is_token_or_cred_file_exist():
             return False, f'{token_cred_msg}'
-        sdk = nebius.sdk()
         tenant_id = nebius.get_tenant_id()
         if tenant_id is None:
             return False, f'{tenant_msg}'
+        sdk = nebius.sdk()
         try:
             service = nebius.iam().ProjectServiceClient(sdk)
             service.list(
@@ -441,7 +448,9 @@ class Nebius(clouds.Cloud):
         del workspace_config  # Unused
         sdk = nebius.sdk()
         profile_client = nebius.iam().ProfileServiceClient(sdk)
-        profile = profile_client.get(nebius.iam().GetProfileRequest()).wait()
+        profile = nebius.sync_call(
+            profile_client.get(nebius.iam().GetProfileRequest(),
+                               timeout=nebius.READ_TIMEOUT))
         if profile.user_profile is not None:
             if profile.user_profile.attributes is None:
                 raise exceptions.CloudUserIdentityError(

@@ -13,6 +13,7 @@ from sky.adaptors import common as adaptors_common
 from sky.utils import common_utils
 from sky.utils import config_utils
 from sky.utils import ux_utils
+from sky.utils import yaml_utils
 
 if typing.TYPE_CHECKING:
     import requests
@@ -80,9 +81,9 @@ class UserRequest:
 
     def encode(self) -> str:
         return _UserRequestBody(
-            task=common_utils.dump_yaml_str(self.task.to_yaml_config()),
-            skypilot_config=common_utils.dump_yaml_str(
-                dict(self.skypilot_config)),
+            task=yaml_utils.dump_yaml_str(self.task.to_yaml_config()),
+            skypilot_config=yaml_utils.dump_yaml_str(dict(
+                self.skypilot_config)),
             request_options=self.request_options,
             at_client_side=self.at_client_side,
         ).model_dump_json()
@@ -92,9 +93,9 @@ class UserRequest:
         user_request_body = _UserRequestBody.model_validate_json(body)
         return cls(
             task=sky.Task.from_yaml_config(
-                common_utils.read_yaml_all_str(user_request_body.task)[0]),
+                yaml_utils.read_yaml_all_str(user_request_body.task)[0]),
             skypilot_config=config_utils.Config.from_dict(
-                common_utils.read_yaml_all_str(
+                yaml_utils.read_yaml_all_str(
                     user_request_body.skypilot_config)[0]),
             request_options=user_request_body.request_options,
             at_client_side=user_request_body.at_client_side,
@@ -116,18 +117,24 @@ class MutatedUserRequest:
 
     def encode(self) -> str:
         return _MutatedUserRequestBody(
-            task=common_utils.dump_yaml_str(self.task.to_yaml_config()),
-            skypilot_config=common_utils.dump_yaml_str(
-                dict(self.skypilot_config),)).model_dump_json()
+            task=yaml_utils.dump_yaml_str(self.task.to_yaml_config()),
+            skypilot_config=yaml_utils.dump_yaml_str(dict(
+                self.skypilot_config),)).model_dump_json()
 
     @classmethod
-    def decode(cls, mutated_user_request_body: str) -> 'MutatedUserRequest':
+    def decode(cls, mutated_user_request_body: str,
+               original_request: UserRequest) -> 'MutatedUserRequest':
         mutated_user_request_body = _MutatedUserRequestBody.model_validate_json(
             mutated_user_request_body)
-        return cls(task=sky.Task.from_yaml_config(
-            common_utils.read_yaml_all_str(mutated_user_request_body.task)[0]),
+        task = sky.Task.from_yaml_config(
+            yaml_utils.read_yaml_all_str(mutated_user_request_body.task)[0])
+        # Some internal Task fields are not serialized. We need to manually
+        # restore them from the original request.
+        task.managed_job_dag = original_request.task.managed_job_dag
+        task.service_name = original_request.task.service_name
+        return cls(task=task,
                    skypilot_config=config_utils.Config.from_dict(
-                       common_utils.read_yaml_all_str(
+                       yaml_utils.read_yaml_all_str(
                            mutated_user_request_body.skypilot_config)[0],))
 
 
@@ -243,7 +250,8 @@ class RestfulAdminPolicy(PolicyTemplate):
                     f'{self.policy_url}: {e}') from None
 
         try:
-            mutated_user_request = MutatedUserRequest.decode(response.json())
+            mutated_user_request = MutatedUserRequest.decode(
+                response.json(), user_request)
         except Exception as e:  # pylint: disable=broad-except
             with ux_utils.print_exception_no_traceback():
                 raise exceptions.RestfulPolicyError(

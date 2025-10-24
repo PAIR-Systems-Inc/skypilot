@@ -14,8 +14,9 @@ from sky import models
 from sky import sky_logging
 from sky.skylet import constants
 from sky.users import rbac
+from sky.utils import annotations
 from sky.utils import common_utils
-from sky.utils import db_utils
+from sky.utils.db import db_utils
 
 logging.getLogger('casbin.policy').setLevel(sky_logging.ERROR)
 logging.getLogger('casbin.role').setLevel(sky_logging.ERROR)
@@ -44,9 +45,10 @@ class PermissionService:
             if _enforcer_instance is None:
                 _enforcer_instance = self
                 engine = global_user_state.initialize_and_get_db()
-                db_utils.add_tables_to_db_sqlalchemy(
+                db_utils.add_all_tables_to_db_sqlalchemy(
                     sqlalchemy_adapter.Base.metadata, engine)
-                adapter = sqlalchemy_adapter.Adapter(engine)
+                adapter = sqlalchemy_adapter.Adapter(
+                    engine, db_class=sqlalchemy_adapter.CasbinRule)
                 model_path = os.path.join(os.path.dirname(__file__),
                                           'model.conf')
                 enforcer = casbin.Enforcer(model_path, adapter)
@@ -67,7 +69,7 @@ class PermissionService:
                 username.encode()).hexdigest()[:common_utils.USER_HASH_LENGTH]
             user_info = global_user_state.get_user(user_hash)
             if user_info:
-                logger.info(f'Basic auth user {username} already exists')
+                logger.debug(f'Basic auth user {username} already exists')
                 return
             global_user_state.add_or_update_user(
                 models.User(id=user_hash, name=username, password=password))
@@ -168,8 +170,6 @@ class PermissionService:
         """
         user_roles = self.enforcer.get_roles_for_user(user_id)
         if not user_roles:
-            logger.info(f'User {user_id} has no roles, adding'
-                        f' default role {rbac.get_default_role()}')
             self.enforcer.add_grouping_policy(user_id, rbac.get_default_role())
             return True
         return False
@@ -183,7 +183,7 @@ class PermissionService:
             # Avoid calling get_user_roles, as it will require the lock.
             current_roles = self.enforcer.get_roles_for_user(user_id)
             if not current_roles:
-                logger.warning(f'User {user_id} has no roles')
+                logger.debug(f'User {user_id} has no roles')
                 return
             self.enforcer.remove_grouping_policy(user_id, current_roles[0])
             self.enforcer.save_policy()
@@ -197,12 +197,12 @@ class PermissionService:
             # Avoid calling get_user_roles, as it will require the lock.
             current_roles = self.enforcer.get_roles_for_user(user_id)
             if not current_roles:
-                logger.warning(f'User {user_id} has no roles')
+                logger.debug(f'User {user_id} has no roles')
             else:
                 # TODO(hailong): how to handle multiple roles?
                 current_role = current_roles[0]
                 if current_role == new_role:
-                    logger.info(f'User {user_id} already has role {new_role}')
+                    logger.debug(f'User {user_id} already has role {new_role}')
                     return
                 self.enforcer.remove_grouping_policy(user_id, current_role)
 
@@ -227,6 +227,12 @@ class PermissionService:
         self._load_policy_no_lock()
         return self.enforcer.get_roles_for_user(user_id)
 
+    def get_users_for_role(self, role: str) -> List[str]:
+        """Get all users for a role."""
+        self._lazy_initialize()
+        self._load_policy_no_lock()
+        return self.enforcer.get_users_for_role(role)
+
     def check_endpoint_permission(self, user_id: str, path: str,
                                   method: str) -> bool:
         """Check permission."""
@@ -249,6 +255,9 @@ class PermissionService:
         with _policy_lock():
             self._load_policy_no_lock()
 
+    # Right now, not a lot of users are using multiple workspaces,
+    # so 5 should be more than enough.
+    @annotations.lru_cache(scope='request', maxsize=5)
     def check_workspace_permission(self, user_id: str,
                                    workspace_name: str) -> bool:
         """Check workspace permission.

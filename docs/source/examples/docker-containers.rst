@@ -138,10 +138,12 @@ you can provide the registry authentication details using :ref:`task environment
     .. tab-item:: AWS ECR
         :sync: aws-ecr-tab
 
+        SkyPilot supports automatic AWS ECR authentication using command substitution. You can specify the authentication command directly in your YAML:
+
         .. code-block:: yaml
 
           resources:
-            image_id: docker:<your-ecr-repo>:<tag>
+            image_id: docker:<repo>:<tag>
 
           envs:
             # Values used in: docker login -u <user> -p <password> <registry server>
@@ -156,6 +158,22 @@ you can provide the registry authentication details using :ref:`task environment
 
           sky launch sky.yaml \
             --env SKYPILOT_DOCKER_PASSWORD="$(aws ecr get-login-password --region us-east-1)"
+
+        .. note::
+
+            If your cluster is on AWS, SkyPilot will automatically use the IAM permissions of the EC2 instance to authenticate with ECR, if the ``SKYPILOT_DOCKER_USERNAME`` and ``SKYPILOT_DOCKER_PASSWORD`` are set to empty strings:
+
+            .. code-block:: yaml
+
+              resources:
+                image_id: docker:<repo>:<tag>
+
+              envs:
+                SKYPILOT_DOCKER_USERNAME: ""
+                SKYPILOT_DOCKER_PASSWORD: ""
+                SKYPILOT_DOCKER_SERVER: <your-user-id>.dkr.ecr.<region>.amazonaws.com
+
+            **Important**: Ensure that the EC2 instance's IAM role has the necessary ECR permissions (``AmazonEC2ContainerRegistryReadOnly`` or appropriate custom policies).
 
     .. tab-item:: GCP GCR
         :sync: gcp-artifact-registry-tab
@@ -191,6 +209,24 @@ you can provide the registry authentication details using :ref:`task environment
                 SKYPILOT_DOCKER_USERNAME: ""
                 SKYPILOT_DOCKER_PASSWORD: ""
                 SKYPILOT_DOCKER_SERVER: <location>-docker.pkg.dev
+
+        .. note::
+
+            ``RunPod`` requires Docker to authenticate to GAR using the `base64-encoded version of the key <https://contact.runpod.io/hc/en-us/articles/39403705226003-Help-to-setup-Google-Cloud-s-Artifact-Registry-GAR-with-RunPod>`_. To base64 encode the JSON key:
+
+            .. code-block:: shell
+
+              base64 -i gcp-key.json -w 0 > gcp-key.json.b64
+            
+            The Docker username should also be changed to ``_json_key_base64``:
+
+            .. code-block:: yaml
+
+              envs:
+                SKYPILOT_DOCKER_USERNAME: _json_key_base64
+                ...
+
+            Furthermore, note that the base64 encoding option is only available on `Google Artifact Registry (GAR) <https://cloud.google.com/artifact-registry/docs>`_, not Google Container Registry (GCR), which has been `deprecated <https://cloud.google.com/artifact-registry/docs/transition/transition-from-gcr>`_ by Google.
 
 
     .. tab-item:: NVIDIA NGC

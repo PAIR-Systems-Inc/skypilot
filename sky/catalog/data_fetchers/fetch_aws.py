@@ -46,7 +46,7 @@ ALL_REGIONS = [
     'eu-west-1',
     'eu-west-2',
     'eu-south-1',
-    # 'eu-south-2', # no supported AMI
+    'eu-south-2',
     'eu-west-3',
     'eu-north-1',
     'me-south-1',
@@ -67,17 +67,17 @@ US_REGIONS = ['us-east-1', 'us-east-2', 'us-west-1', 'us-west-2']
 # The following columns will be included in the final catalog.
 USEFUL_COLUMNS = [
     'InstanceType', 'AcceleratorName', 'AcceleratorCount', 'vCPUs', 'MemoryGiB',
-    'GpuInfo', 'Price', 'SpotPrice', 'Region', 'AvailabilityZone'
+    'GpuInfo', 'Price', 'SpotPrice', 'Region', 'AvailabilityZone', 'Arch'
 ]
 
 # NOTE: the hard-coded us-east-1 URL is not a typo. AWS pricing endpoint is
 # only available in this region, but it serves pricing information for all
 # regions.
 PRICING_TABLE_URL_FMT = 'https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonEC2/current/{region}/index.csv'  # pylint: disable=line-too-long
-# Hardcode the regions that offer p4de.24xlarge as our credential does not have
-# the permission to query the offerings of the instance.
-# Ref: https://aws.amazon.com/ec2/instance-types/p4/
-P4DE_REGIONS = ['us-east-1', 'us-west-2']
+# g6f instances have fractional GPUs, but the API returns Count: 1 under
+# GpuInfo. However, the GPU memory is properly scaled. Taking the instance GPU
+# divided by the total memory of an L4 will give us the fraction of the GPU.
+L4_GPU_MEMORY = 22888
 
 regions_enabled: Optional[Set[str]] = None
 
@@ -210,35 +210,6 @@ def _get_spot_pricing_table(region: str) -> 'pd.DataFrame':
     return df
 
 
-def _patch_p4de(region: str, df: 'pd.DataFrame',
-                pricing_df: 'pd.DataFrame') -> 'pd.DataFrame':
-    # Hardcoded patch for p4de.24xlarge, as our credentials doesn't have access
-    # to the instance type.
-    # Columns:
-    # InstanceType,AcceleratorName,AcceleratorCount,vCPUs,MemoryGiB,GpuInfo,
-    # Price,SpotPrice,Region,AvailabilityZone
-    records = []
-    for zone in df[df['Region'] == region]['AvailabilityZone'].unique():
-        records.append({
-            'InstanceType': 'p4de.24xlarge',
-            'AcceleratorName': 'A100-80GB',
-            'AcceleratorCount': 8,
-            'vCPUs': 96,
-            'MemoryGiB': 1152,
-            'GpuInfo':
-                ('{\'Gpus\': [{\'Name\': \'A100-80GB\', \'Manufacturer\': '
-                 '\'NVIDIA\', \'Count\': 8, \'MemoryInfo\': {\'SizeInMiB\': '
-                 '81920}}], \'TotalGpuMemoryInMiB\': 655360}'),
-            'AvailabilityZone': zone,
-            'Region': region,
-            'Price': pricing_df[pricing_df['InstanceType'] == 'p4de.24xlarge']
-                     ['Price'].values[0],
-            'SpotPrice': np.nan,
-        })
-    df = pd.concat([df, pd.DataFrame.from_records(records)])
-    return df
-
-
 def _get_instance_types_df(region: str) -> Union[str, 'pd.DataFrame']:
     try:
         # Fetch the zone info first to make sure the account has access to the
@@ -270,6 +241,17 @@ def _get_instance_types_df(region: str) -> Union[str, 'pd.DataFrame']:
             if accelerator is None:
                 return None, np.nan
             return accelerator['Name'], accelerator['Count']
+
+        def get_arch(row) -> Optional[str]:
+            if 'ProcessorInfo' in row:
+                processor = row['ProcessorInfo']
+                if 'SupportedArchitectures' in processor:
+                    archs = processor['SupportedArchitectures']
+                    if isinstance(archs, list):
+                        return archs[0]
+                    elif isinstance(archs, str):
+                        return archs
+            return None
 
         def get_vcpus(row) -> float:
             if not np.isnan(row['vCPU']):
@@ -313,11 +295,22 @@ def _get_instance_types_df(region: str) -> Union[str, 'pd.DataFrame']:
                 # AWS API is 'NVIDIA', which is incorrect. See #4652.
                 acc_name = 'H200'
                 acc_count = 8
+            if (row['InstanceType'].startswith('g6f') or
+                    row['InstanceType'].startswith('gr6f')):
+                # These instance actually have only fractional GPUs, but the API
+                # returns Count: 1 under GpuInfo. We need to check the GPU
+                # memory to get the actual fraction of the GPU.
+                # See also Standard_NV{vcpu}ads_A10_v5 support on Azure.
+                fraction = row['GpuInfo']['TotalGpuMemoryInMiB'] / L4_GPU_MEMORY
+                acc_count = round(fraction, 3)
+            if row['InstanceType'] == 'p5.4xlarge':
+                acc_count = 1
             return pd.Series({
                 'AcceleratorName': acc_name,
                 'AcceleratorCount': acc_count,
                 'vCPUs': get_vcpus(row),
                 'MemoryGiB': get_memory_gib(row),
+                'Arch': get_arch(row),
             })
 
         # The AWS API may not have all the instance types in the pricing table,
@@ -341,9 +334,6 @@ def _get_instance_types_df(region: str) -> Union[str, 'pd.DataFrame']:
         df = pd.concat(
             [df, df.apply(get_additional_columns, axis='columns')],
             axis='columns')
-        # patch the df for p4de.24xlarge
-        if region in P4DE_REGIONS:
-            df = _patch_p4de(region, df, pricing_df)
         if 'GpuInfo' not in df.columns:
             df['GpuInfo'] = np.nan
         df = df[USEFUL_COLUMNS]

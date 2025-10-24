@@ -1,16 +1,20 @@
 """ Vast Cloud. """
 
+import os
 import typing
 from typing import Dict, Iterator, List, Optional, Tuple, Union
 
 from sky import catalog
 from sky import clouds
+from sky.adaptors import common
 from sky.utils import registry
 from sky.utils import resources_utils
 
 if typing.TYPE_CHECKING:
     from sky import resources as resources_lib
-    from sky.volumes import volume as volume_lib
+    from sky.utils import volume as volume_lib
+
+_CREDENTIAL_PATH = '~/.config/vastai/vast_api_key'
 
 
 @registry.CLOUD_REGISTRY.register
@@ -29,8 +33,6 @@ class Vast(clouds.Cloud):
         clouds.CloudImplementationFeatures.CUSTOM_NETWORK_TIER:
             ('Custom network tier is currently not supported in '
              f'{_REPR}.'),
-        clouds.CloudImplementationFeatures.OPEN_PORTS:
-            ('Opening ports is currently not supported on Vast.'),
         clouds.CloudImplementationFeatures.STORAGE_MOUNTING:
             ('Mounting object stores is not supported on Vast.'),
         clouds.CloudImplementationFeatures.HIGH_AVAILABILITY_CONTROLLERS:
@@ -49,6 +51,7 @@ class Vast(clouds.Cloud):
 
     PROVISIONER_VERSION = clouds.ProvisionerVersion.SKYPILOT
     STATUS_VERSION = clouds.StatusVersion.SKYPILOT
+    OPEN_PORTS_VERSION = clouds.OpenPortsVersion.LAUNCH_ONLY
 
     @classmethod
     def _unsupported_features_for_resources(
@@ -136,16 +139,19 @@ class Vast(clouds.Cloud):
         return 0.0
 
     @classmethod
-    def get_default_instance_type(
-            cls,
-            cpus: Optional[str] = None,
-            memory: Optional[str] = None,
-            disk_tier: Optional[resources_utils.DiskTier] = None
-    ) -> Optional[str]:
+    def get_default_instance_type(cls,
+                                  cpus: Optional[str] = None,
+                                  memory: Optional[str] = None,
+                                  disk_tier: Optional[
+                                      resources_utils.DiskTier] = None,
+                                  region: Optional[str] = None,
+                                  zone: Optional[str] = None) -> Optional[str]:
         """Returns the default instance type for Vast."""
         return catalog.get_default_instance_type(cpus=cpus,
                                                  memory=memory,
                                                  disk_tier=disk_tier,
+                                                 region=region,
+                                                 zone=zone,
                                                  clouds='vast')
 
     @classmethod
@@ -218,7 +224,9 @@ class Vast(clouds.Cloud):
             default_instance_type = Vast.get_default_instance_type(
                 cpus=resources.cpus,
                 memory=resources.memory,
-                disk_tier=resources.disk_tier)
+                disk_tier=resources.disk_tier,
+                region=resources.region,
+                zone=resources.zone)
             if default_instance_type is None:
                 # TODO: Add hints to all return values in this method to help
                 #  users understand why the resources are not launchable.
@@ -249,31 +257,27 @@ class Vast(clouds.Cloud):
     def _check_compute_credentials(
             cls) -> Tuple[bool, Optional[Union[str, Dict[str, str]]]]:
         """Checks if the user has valid credentials for
-        Vast's compute service. """
-        try:
-            import vastai_sdk as _vast  # pylint: disable=import-outside-toplevel
-            vast = _vast.VastAI()
+        Vast's compute service."""
 
-            # We only support file pased credential passing
-            if vast.creds_source != 'FILE':
-                return False, (
-                    'error \n'  # First line is indented by 4 spaces
-                    '    Credentials can be set up by running: \n'
-                    '        $ pip install vastai\n'
-                    '        $ echo [key] > ~/.vast_api_key\n'
-                    '    For more information, see https://skypilot.readthedocs.io/en/latest/getting-started/installation.html#vast'  # pylint: disable=line-too-long
-                )
+        dependency_error_msg = ('Failed to import vast. '
+                                'To install, run: pip install skypilot[vast]')
+        if not common.can_import_modules(['vastai_sdk']):
+            return False, dependency_error_msg
 
-            return True, None
+        if not os.path.exists(os.path.expanduser(_CREDENTIAL_PATH)):
+            return False, (
+                'error \n'  # First line is indented by 4 spaces
+                '    Credentials can be set up by running: \n'
+                '        $ pip install vastai\n'
+                '        $ mkdir -p ~/.config/vastai\n'
+                f'        $ echo [key] > {_CREDENTIAL_PATH}\n'
+                '    For more information, see https://skypilot.readthedocs.io/en/latest/getting-started/installation.html#vast'  # pylint: disable=line-too-long
+            )
 
-        except ImportError:
-            return False, ('Failed to import vast. '
-                           'To install, run: pip install skypilot[vast]')
+        return True, None
 
     def get_credential_file_mounts(self) -> Dict[str, str]:
-        return {
-            '~/.config/vastai/vast_api_key': '~/.config/vastai/vast_api_key'
-        }
+        return {f'{_CREDENTIAL_PATH}': f'{_CREDENTIAL_PATH}'}
 
     @classmethod
     def get_user_identities(cls) -> Optional[List[List[str]]]:
