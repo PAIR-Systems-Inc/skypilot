@@ -473,42 +473,6 @@ def _request_execution_wrapper(request_id: str,
                                            group='request_execution'):
                     return_value = func(**request_body.to_kwargs())
                 f.flush()
-<<<<<<< HEAD
-        except KeyboardInterrupt:
-            logger.info(f'Request {request_id} cancelled by user')
-            # Kill all children processes related to this request.
-            # Each executor handles a single request, so we can safely kill all
-            # children processes related to this request.
-            # This is required as python does not pass the KeyboardInterrupt
-            # to the threads that are not main thread.
-            subprocess_utils.kill_children_processes()
-            _restore_output(original_stdout, original_stderr)
-            return
-        except exceptions.ExecutionRetryableError as e:
-            logger.error(e)
-            logger.info(e.hint)
-            with api_requests.update_request(request_id) as request_task:
-                assert request_task is not None, request_id
-                # Retried request will undergo rescheduling and a new execution,
-                # clear the pid of the request.
-                request_task.pid = None
-            # Yield control to the scheduler for uniform handling of retries.
-            _restore_output(original_stdout, original_stderr)
-            raise
-        except (Exception, SystemExit) as e:  # pylint: disable=broad-except
-            api_requests.set_request_failed(request_id, e)
-            _restore_output(original_stdout, original_stderr)
-            logger.info(f'Request {request_id} failed due to '
-                        f'{common_utils.format_exception(e)}')
-            import traceback
-            logger.error(f'Traceback:\n{traceback.format_exc()}')
-            return
-        else:
-            api_requests.set_request_succeeded(
-                request_id, return_value if not ignore_return_value else None)
-            _restore_output(original_stdout, original_stderr)
-            logger.info(f'Request {request_id} finished')
-=======
     except KeyboardInterrupt:
         logger.info(f'Request {request_id} cancelled by user')
         # Kill all children processes related to this request.
@@ -561,7 +525,6 @@ def _request_execution_wrapper(request_id: str,
         except Exception as e:  # pylint: disable=broad-except
             logger.error(f'Failed to record memory metrics: '
                          f'{common_utils.format_exception(e)}')
->>>>>>> origin/master
 
 
 _first_request = True
