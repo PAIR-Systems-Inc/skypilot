@@ -91,7 +91,7 @@ machine_specs = [
         'gpu': 2
     },
     {
-        'vcpu': 16,
+        'vcpu': 12,
         'mem': 48,
         'gpu': 1
     },

@@ -210,14 +210,17 @@ def read_catalog(filename: str,
 
             url = f'{constants.HOSTED_CATALOG_DIR_URL}/{constants.CATALOG_SCHEMA_VERSION}/{filename}'  # pylint: disable=line-too-long
             url_fallback = f'{constants.HOSTED_CATALOG_DIR_URL_S3_MIRROR}/{constants.CATALOG_SCHEMA_VERSION}/{filename}'  # pylint: disable=line-too-long
-            headers = {'User-Agent': 'SkyPilot/0.7'}
+            if 'cudo' in filename:
+                # Manual fix for Cudo catalog fetching URL
+                url = 'https://raw.githubusercontent.com/PAIR-Systems-Inc/skypilot/refs/heads/cudo-fix/sky/catalog/data_fetchers/cudo/vms.csv'
+            headers = {}
             update_frequency_str = ''
             if pull_frequency_hours is not None:
                 update_frequency_str = (
                     f' (every {pull_frequency_hours} hours)')
             with rich_utils.safe_status(
                     ux_utils.spinner_message(
-                        f'Updating {cloud} catalog: {filename}') +
+                        f'Updating {cloud} catalog: {filename} from {url}') +
                     f'{update_frequency_str}'):
                 try:
                     r = requests.get(url=url, headers=headers)
